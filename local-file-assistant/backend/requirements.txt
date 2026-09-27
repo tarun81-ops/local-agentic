@@ -1,0 +1,24 @@
+# phase 1 (vertical slice)
+fastapi
+uvicorn[standard]
+pydantic-settings
+openai
+httpx
+pymupdf
+python-docx
+psutil
+
+# phase 1+ (full parser set)
+python-pptx
+openpyxl
+
+# phase 2 (hybrid search)
+lancedb
+# embeddings: granite-embedding:278m via Ollama (no torch dependency needed)
+
+# phase 4 (organizer + file ops)
+send2trash
+# watchdog (folder watching, not wired up yet)
+
+# phase 5 (images)
+# rapidocr-onnxruntime

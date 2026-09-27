@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+*.env
+!.env.example
+node_modules/
+ui/dist/
+ui/release/
+*.log

@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Local File Assistant</title>
+<style>
+  :root {
+    --panel: rgba(20, 23, 28, 0.94);
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #F2F0EA;
+    --text-dim: #6B7280;
+    --accent: #E8823C;
+    --accent-tint: rgba(232, 130, 60, 0.14);
+    --verified: #6FCF97;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-app-region: no-drag;
+    overflow: hidden;
+    user-select: none;
+  }
+  #panel {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    backdrop-filter: blur(20px);
+  }
+  #mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-tint);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  #mark div {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  #query {
+    flex-grow: 1;
+    background: none;
+    border: none;
+    outline: none;
+    font-size: 16px;
+    color: var(--text);
+    font-family: inherit;
+  }
+  #query::placeholder { color: var(--text-dim); }
+  #hotkey {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: #1B1F26;
+    border: 1px solid #2B303A;
+    border-radius: 7px;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  #shell {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(20px);
+    overflow: hidden;
+  }
+  #panel {
+    width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  #results {
+    display: none;
+    flex-direction: column;
+    max-height: 480px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+  }
+  #results.visible { display: flex; }
+  .result-row {
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    cursor: default;
+  }
+  .result-row:last-child { border-bottom: none; }
+  .result-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .result-path {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .result-snippet {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .result-status {
+    padding: 14px 18px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+  <div id="shell">
+    <div id="panel">
+      <div id="mark"><div></div></div>
+      <input id="query" type="text" placeholder="Ask about your files, or search…" autofocus>
+      <div id="hotkey">Ctrl + Space</div>
+    </div>
+    <div id="results"></div>
+  </div>
+
+  <script>
+    const SEARCH_URL = 'http://127.0.0.1:8756/search';
+    const IDLE_HEIGHT = 64;
+
+    const input = document.getElementById('query');
+    const results = document.getElementById('results');
+    let requestId = 0;
+
+    window.addEventListener('DOMContentLoaded', () => input.focus());
+
+    function fileName(path) {
+      return path.split(/[\\/]/).pop();
+    }
+
+    function collapseResults() {
+      results.classList.remove('visible');
+      results.innerHTML = '';
+      window.overlay.resize(IDLE_HEIGHT);
+    }
+
+    function renderResults(rows) {
+      results.innerHTML = '';
+      if (rows.length === 0) {
+        results.innerHTML = '<div class="result-status">No matches.</div>';
+      } else {
+        for (const row of rows) {
+          const el = document.createElement('div');
+          el.className = 'result-row';
+          el.innerHTML = `
+            <div class="result-name"></div>
+            <div class="result-path"></div>
+            <div class="result-snippet"></div>
+          `;
+          el.querySelector('.result-name').textContent = fileName(row.path);
+          el.querySelector('.result-path').textContent = row.path;
+          el.querySelector('.result-snippet').textContent = row.text;
+          results.appendChild(el);
+        }
+      }
+      results.classList.add('visible');
+      // Let the browser lay the rows out, then size the native window to fit them.
+      requestAnimationFrame(() => {
+        window.overlay.resize(IDLE_HEIGHT + results.scrollHeight);
+      });
+    }
+
+    async function runSearch(query) {
+      const thisRequest = ++requestId;
+      results.innerHTML = '<div class="result-status">Searching…</div>';
+      results.classList.add('visible');
+      window.overlay.resize(IDLE_HEIGHT + 44);
+
+      let rows;
+      try {
+        const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        rows = (await response.json()).results;
+      } catch (err) {
+        if (thisRequest !== requestId) return; // a newer search superseded this one
+        results.innerHTML = `<div class="result-status">Can't reach the backend — is it running?</div>`;
+        window.overlay.resize(IDLE_HEIGHT + 44);
+        return;
+      }
+      if (thisRequest !== requestId) return;
+      renderResults(rows);
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        input.value = '';
+        collapseResults();
+        window.overlay.hide();
+      }
+    });
+
+    // ponytail: search fires on Enter, not as-you-type — add debounced
+    // live search once this feels slow to use. Results are read-only;
+    // opening a file from here is a later step.
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      const query = input.value.trim();
+      if (query) {
+        runSearch(query);
+      } else {
+        collapseResults();
+      }
+    });
+  </script>
+</body>
+</html>
