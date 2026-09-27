@@ -148,6 +148,8 @@
     const input = document.getElementById('query');
     const results = document.getElementById('results');
     let requestId = 0;
+    let apiToken = null;
+    const apiTokenReady = window.overlay.getApiToken().then((t) => { apiToken = t; });
 
     window.addEventListener('DOMContentLoaded', () => input.focus());
 
@@ -195,7 +197,10 @@
 
       let rows;
       try {
-        const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`);
+        await apiTokenReady;
+        const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`, {
+          headers: { Authorization: `Bearer ${apiToken}` },
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         rows = (await response.json()).results;
       } catch (err) {

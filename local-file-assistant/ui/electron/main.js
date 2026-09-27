@@ -1,13 +1,37 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
+const { spawn } = require('child_process');
+const crypto = require('crypto');
 const path = require('path');
 
 const OVERLAY_WIDTH = 640;
 const OVERLAY_HEIGHT = 64;
 const OVERLAY_MAX_HEIGHT = 620;
 const OVERLAY_TOP_OFFSET = 80;
-const TOGGLE_SHORTCUT = 'CommandOrControl+Space';
+const TOGGLE_SHORTCUT = 'CommandOrControl+Shift+Space';
+
+const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
+const BACKEND_PYTHON = path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe');
+const API_TOKEN = crypto.randomBytes(32).toString('hex');
 
 let overlay = null;
+let backendProcess = null;
+
+function startBackend() {
+  backendProcess = spawn(BACKEND_PYTHON, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8756'], {
+    cwd: BACKEND_DIR,
+    env: { ...process.env, API_TOKEN, OLLAMA_KEEP_ALIVE: '-1' },
+  });
+  backendProcess.stdout.on('data', (data) => process.stdout.write(`[backend] ${data}`));
+  backendProcess.stderr.on('data', (data) => process.stderr.write(`[backend] ${data}`));
+  backendProcess.on('exit', (code) => {
+    if (code !== null && code !== 0) console.error(`backend process exited with code ${code}`);
+    backendProcess = null;
+  });
+}
+
+function stopBackend() {
+  if (backendProcess) backendProcess.kill();
+}
 
 function createOverlay() {
   const { width } = screen.getPrimaryDisplay().workAreaSize;
@@ -65,6 +89,7 @@ function toggleOverlay() {
 }
 
 app.whenReady().then(() => {
+  startBackend();
   createOverlay();
 
   const registered = globalShortcut.register(TOGGLE_SHORTCUT, toggleOverlay);
@@ -75,16 +100,15 @@ app.whenReady().then(() => {
 
 ipcMain.on('overlay:hide', hideOverlay);
 ipcMain.on('overlay:resize', (_event, height) => resizeOverlay(height));
+ipcMain.handle('overlay:get-api-token', () => API_TOKEN);
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  stopBackend();
 });
 
-// ponytail: overlay-only shell for now, no backend process management —
-// add spawning the FastAPI backend + auth token handoff here once
-// routes_chat/search/organize are actually implemented (they currently
-// just raise NotImplementedError), and give the app a tray icon so
-// window-all-closed doesn't quit an overlay-only app.
+// ponytail: no tray icon yet — quitting on window-all-closed is fine while
+// the overlay is the only window this app has.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
