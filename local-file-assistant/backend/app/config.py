@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     ollama_url: str = "http://localhost:11434"
     ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_model: str = ""
+    ollama_model: str = "qwen3-vl:2b-instruct"
     embedding_model: str = "granite-embedding:278m"
 
     data_dir: Path = _DEFAULT_DATA_DIR
