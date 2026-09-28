@@ -18,7 +18,7 @@ lancedb
 
 # phase 4 (organizer + file ops)
 send2trash
-# watchdog (folder watching, not wired up yet)
+watchdog
 
 # phase 5 (images)
 # rapidocr-onnxruntime

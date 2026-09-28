@@ -1,6 +1,11 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
+
+# %APPDATA%\LocalFileAssistant, e.g. C:\Users\<user>\AppData\Roaming\LocalFileAssistant.
+# Override any of data_dir/db_path/vector_db_dir individually via env vars or .env.
+_DEFAULT_DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LocalFileAssistant"
 
 
 class Settings(BaseSettings):
@@ -13,11 +18,11 @@ class Settings(BaseSettings):
     ollama_model: str = ""
     embedding_model: str = "granite-embedding:278m"
 
-    data_dir: Path = Path(__file__).resolve().parents[2] / "data"
-    db_path: Path = data_dir / "index.db"
-    vector_db_dir: Path = data_dir / "lancedb"
+    data_dir: Path = _DEFAULT_DATA_DIR
+    db_path: Path = _DEFAULT_DATA_DIR / "index.db"
+    vector_db_dir: Path = _DEFAULT_DATA_DIR / "lancedb"
 
-    watch_folders: str = ""  # comma-separated; not consumed yet (phase 2 watcher)
+    watch_folders: str = ""  # comma-separated folders the watcher indexes on file changes
 
     class Config:
         env_file = ".env"

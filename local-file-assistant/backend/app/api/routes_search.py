@@ -9,8 +9,7 @@ from app.db.vector_store import connect as vector_connect
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-@router.get("")
-async def search(q: str):
+def hybrid_search(q: str) -> list[dict]:
     conn = fts_connect(settings.db_path)
     try:
         fts_results = fts_search.search(conn, q)
@@ -27,5 +26,9 @@ async def search(q: str):
         except httpx.HTTPError:
             pass
 
-    results = hybrid_ranker.merge(fts_results, vector_results) if vector_results else fts_results
-    return {"results": results}
+    return hybrid_ranker.merge(fts_results, vector_results) if vector_results else fts_results
+
+
+@router.get("")
+async def search(q: str):
+    return {"results": hybrid_search(q)}

@@ -1,10 +1,23 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.api import routes_chat, routes_files, routes_organize, routes_search
+from app.core.watcher import start_watcher
 
-app = FastAPI(title="Local File Assistant")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    observer = start_watcher()
+    yield
+    if observer:
+        observer.stop()
+        observer.join()
+
+
+app = FastAPI(title="Local File Assistant", lifespan=lifespan)
 
 
 @app.middleware("http")
