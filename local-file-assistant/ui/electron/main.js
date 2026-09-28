@@ -13,7 +13,11 @@ const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
 const BACKEND_PYTHON = path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe');
 const API_TOKEN = crypto.randomBytes(32).toString('hex');
 
+const IS_DEV = process.argv.includes('--dev');
+const DEV_SERVER_URL = 'http://localhost:5173';
+
 let overlay = null;
+let mainWindow = null;
 let backendProcess = null;
 
 function startBackend() {
@@ -65,6 +69,32 @@ function createOverlay() {
   overlay.on('blur', hideOverlay);
 }
 
+function createMainWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    title: 'Local File Assistant',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (IS_DEV) {
+    // concurrently starts Vite and Electron together, so the dev server may not
+    // be listening yet — retry until it is.
+    mainWindow.webContents.on('did-fail-load', (_event, _code, _desc, _url, isMainFrame) => {
+      if (isMainFrame) setTimeout(() => mainWindow?.loadURL(DEV_SERVER_URL), 500);
+    });
+    mainWindow.loadURL(DEV_SERVER_URL);
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  }
+
+  mainWindow.on('closed', () => { mainWindow = null; });
+}
+
 function showOverlay() {
   if (!overlay) createOverlay();
   overlay.show();
@@ -91,6 +121,7 @@ function toggleOverlay() {
 app.whenReady().then(() => {
   startBackend();
   createOverlay();
+  createMainWindow();
 
   const registered = globalShortcut.register(TOGGLE_SHORTCUT, toggleOverlay);
   if (!registered) {
