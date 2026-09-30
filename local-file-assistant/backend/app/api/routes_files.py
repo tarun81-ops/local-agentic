@@ -1,42 +1,191 @@
+import os
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
-from app.core.indexer import index_folder
+from app.core import indexer
+from app.core.watcher import watcher
+from app.db import sqlite_fts
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-# ponytail: single global status dict — this is a single-user local app with one indexer
-# running at a time, not a job queue. Add per-job IDs if concurrent index runs are ever needed.
-_status = {"state": "idle", "seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "error": None}
 
-
-class IndexRequest(BaseModel):
+class FolderRequest(BaseModel):
     folder: str
 
 
-def _run_index(folder: Path) -> None:
-    _status.update(state="running", seen=0, indexed=0, skipped=0, failed=0, error=None)
+class PathRequest(BaseModel):
+    path: str
+
+
+def _conn():
+    return sqlite_fts.connect(settings.db_path)
+
+
+# One index run at a time: a single-user local app, not a job queue.
+_status_lock = threading.Lock()
+_COUNTS = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0}
+_status = {"state": "idle", "folder": None, "queue": [], "started": None, "error": None, **_COUNTS}
+
+
+def _update(**kw):
+    with _status_lock:
+        _status.update(kw)
+
+
+def _run_index(folders: list[Path]) -> None:
+    """Scans folders one after another (a single folder when added from the Index page, all
+    unscanned folders at startup)."""
+    indexer.CANCEL.clear()
     try:
-        result = index_folder(folder, settings.db_path, settings.vector_db_dir, on_progress=_status.update)
-        _status.update(state="done", **result)
+        for i, folder in enumerate(folders):
+            if indexer.CANCEL.is_set():
+                break
+            _update(folder=str(folder), queue=[str(f) for f in folders[i + 1 :]], started=time.monotonic(), **_COUNTS)
+            result = indexer.index_folder(folder, settings.db_path, settings.vector_db_dir, on_progress=lambda c: _update(**c))
+            _update(**result)
+        _update(state="cancelled" if indexer.CANCEL.is_set() else "done", queue=[])
     except Exception as exc:
-        _status.update(state="error", error=str(exc))
+        _update(state="error", error=f"{type(exc).__name__}: {exc}", queue=[])
+
+
+def _start_index(folders: list[Path]) -> dict:
+    with _status_lock:
+        if _status["state"] == "running":
+            raise HTTPException(status_code=409, detail=f"Already scanning {_status['folder']}. Try again when it finishes.")
+        _status.update(state="running", folder=str(folders[0]), error=None, **_COUNTS)
+    threading.Thread(target=_run_index, args=(folders,), name="index-run", daemon=True).start()
+    return {"state": "started", "folder": str(folders[0])}
+
+
+def rescan_unscanned() -> list[str]:
+    """Called at startup: scans folders that were never fully scanned — new ones whose scan
+    was interrupted, and all of them after an index schema upgrade."""
+    conn = _conn()
+    try:
+        folders = [Path(p) for p in sqlite_fts.unscanned_roots(conn) if Path(p).is_dir()]
+    finally:
+        conn.close()
+    if folders:
+        try:
+            _start_index(folders)
+        except HTTPException:
+            return []
+    return [str(f) for f in folders]
+
+
+def _existing_dir(folder: str) -> Path:
+    path = Path(folder).expanduser()
+    if not path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a folder: {folder}")
+    return path.resolve()
+
+
+@router.get("/roots")
+def roots():
+    conn = _conn()
+    try:
+        rows = sqlite_fts.list_roots(conn)
+    finally:
+        conn.close()
+    progress = _snapshot()
+    running = progress["folder"] if progress["state"] == "running" else None
+    queued = set(progress.get("queue") or [])
+    for r in rows:
+        if r["path"] == running:
+            r["state"] = "scanning"
+            r["progress"] = progress
+        elif r["path"] in queued:
+            r["state"] = "queued"
+        elif not Path(r["path"]).is_dir():
+            r["state"] = "missing"
+        elif r["last_scan"] is None:
+            r["state"] = "not_scanned"
+        else:
+            r["state"] = "up_to_date"
+    return {"roots": rows}
+
+
+@router.post("/roots")
+def add_root(req: FolderRequest):
+    folder = _existing_dir(req.folder)
+    conn = _conn()
+    try:
+        sqlite_fts.add_root(conn, folder)
+    finally:
+        conn.close()
+    watcher.refresh()
+    return _start_index([folder])
+
+
+@router.post("/roots/remove")
+def remove_root(req: FolderRequest):
+    """Stops indexing a folder and forgets its entries. The files themselves are not touched."""
+    removed = indexer.remove_root(req.folder, settings.db_path, settings.vector_db_dir)
+    watcher.refresh()
+    return {"removed": removed}
 
 
 @router.post("/index")
-async def start_index(req: IndexRequest, background_tasks: BackgroundTasks):
-    folder = Path(req.folder)
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail="folder does not exist or is not a directory")
-    if _status["state"] == "running":
-        raise HTTPException(status_code=409, detail="an index run is already in progress")
-    background_tasks.add_task(_run_index, folder)
-    return {"state": "started", "folder": str(folder)}
+def start_index(req: FolderRequest):
+    return _start_index([_existing_dir(req.folder)])
+
+
+@router.post("/index/cancel")
+def cancel_index():
+    """Stops the scan after the file it is on. Files done so far stay indexed; the next scan
+    carries on from there (unchanged files are skipped quickly)."""
+    with _status_lock:
+        running = _status["state"] == "running"
+    if running:
+        indexer.CANCEL.set()
+    return {"cancelling": running}
+
+
+def _snapshot() -> dict:
+    with _status_lock:
+        current = dict(_status)
+    started = current.pop("started", None)
+    if current["state"] == "running" and started:
+        minutes = max((time.monotonic() - started) / 60, 1e-6)
+        current["files_per_min"] = round(current["seen"] / minutes, 1)
+    return current
 
 
 @router.get("/index/status")
-async def status():
-    return _status
+def status():
+    return {**_snapshot(), "errors": list(indexer.RECENT_ERRORS)}
+
+
+@router.get("")
+def list_files(root: str | None = None):
+    conn = _conn()
+    try:
+        return {"files": sqlite_fts.list_files(conn, root)}
+    finally:
+        conn.close()
+
+
+@router.post("/open")
+def open_file(req: PathRequest):
+    """Opens an indexed file in its default app. Only files in the index can be opened, so
+    this can't be used to launch arbitrary programs."""
+    conn = _conn()
+    try:
+        known = sqlite_fts.is_indexed(conn, req.path)
+    finally:
+        conn.close()
+    path = Path(req.path)
+    if not known or not path.is_file():
+        raise HTTPException(status_code=404, detail="That file isn't in the index (it may have moved).")
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: S606 - path is an indexed document, not user-typed
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+    return {"opened": str(path)}

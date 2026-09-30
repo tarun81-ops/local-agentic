@@ -1,5 +1,6 @@
+# Runs the backend on its own (port 8756) for API work. The desktop app (cd ui; npm run dev)
+# starts its own backend, so you don't need this for normal use. With no API_TOKEN in .env,
+# a token is generated and printed; send it as "Authorization: Bearer <token>".
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location "$root\backend"
-
-$env:OLLAMA_KEEP_ALIVE = "-1"
-& ".venv\Scripts\python.exe" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8756
+& ".venv\Scripts\python.exe" run.py

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' ws://localhost:5173 http://127.0.0.1:*">
+<title>Local File Assistant overlay</title>
+</head>
+<body class="overlay">
+  <div id="scrim">
+    <div id="panel" role="dialog" aria-label="Search or ask about your files">
+      <div class="overlay-input">
+        <div class="mark mark-overlay" aria-hidden="true"><div></div></div>
+        <input id="query" type="text" autocomplete="off" spellcheck="false" aria-label="Search or ask" role="combobox" aria-autocomplete="list" aria-controls="overlay-body" aria-expanded="false">
+        <div class="chip">ESC</div>
+      </div>
+      <div class="rule"></div>
+      <div class="overlay-tabs">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" role="tab" data-mode="search" aria-selected="true">SEARCH</button>
+          <button type="button" class="tab" role="tab" data-mode="ask" aria-selected="false">ASK</button>
+          <button type="button" class="tab" role="tab" data-mode="organize" aria-selected="false">ORGANIZE</button>
+        </div>
+        <div class="overlay-status"><span class="status-dot"></span><span id="overlay-status" role="status" aria-live="polite">LOCAL — READY</span></div>
+      </div>
+      <div id="overlay-body" aria-live="polite"></div>
+      <div id="overlay-footer" class="overlay-footer" hidden>
+        <div>↑↓ NAVIGATE &nbsp;&nbsp; ↵ OPEN &nbsp;&nbsp; TAB ASK AI</div>
+        <div>ESC TO CLOSE</div>
+      </div>
+      <div class="overlay-note">100% LOCAL — NOTHING LEAVES THIS DEVICE</div>
+    </div>
+  </div>
+  <script type="module" src="/src/overlay.js"></script>
+</body>
+</html>

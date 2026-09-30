@@ -1,10 +1,17 @@
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 data/
 *.env
+.env
 !.env.example
 node_modules/
 ui/dist/
 ui/release/
+backend/build/
+backend/dist/
+*.spec
 *.log
+# Local secrets and generated files
+backend/.env

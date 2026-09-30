@@ -1,39 +1,66 @@
+import logging
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import routes_chat, routes_files, routes_organize, routes_search, routes_settings
 from app.config import settings
-from app.api import routes_chat, routes_files, routes_organize, routes_search
-from app.core.watcher import start_watcher
+from app.core.llm import idle
+from app.core.watcher import watcher
+from app.security import make_guard, resolve_token
+
+_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def _setup_logging() -> None:
+    """Console plus %APPDATA%\\LocalFileAssistant\\logs\\backend.log (5 MB x 3), so a crash in the
+    installed app leaves something to read. Only file paths and errors are logged, never
+    file contents, questions or the API token."""
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        log_dir = settings.data_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handlers.append(RotatingFileHandler(log_dir / "backend.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8"))
+    except OSError:
+        pass
+    logging.basicConfig(level=logging.INFO, format=_FORMAT, handlers=handlers, force=True)
+
+
+_setup_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    observer = start_watcher()
+    watcher.start()
+    idle.start()
+    if settings.auto_rescan:
+        pending = routes_files.rescan_unscanned()
+        if pending:
+            logging.getLogger(__name__).info("rebuilding the index for %d folder(s)", len(pending))
     yield
-    if observer:
-        observer.stop()
-        observer.join()
+    idle.stop()
+    watcher.stop()
 
 
 app = FastAPI(title="Local File Assistant", lifespan=lifespan)
 
-
-@app.middleware("http")
-async def require_token(request: Request, call_next):
-    if settings.api_token and request.headers.get("Authorization") != f"Bearer {settings.api_token}":
-        return JSONResponse(status_code=401, content={"detail": "unauthorized"})
-    return await call_next(request)
-
-
-app.include_router(routes_search.router)
-app.include_router(routes_chat.router)
-app.include_router(routes_files.router)
-app.include_router(routes_organize.router)
+# Order matters: the last middleware added runs first. CORS must answer preflights
+# before the token guard sees them.
+app.middleware("http")(make_guard(resolve_token(settings.data_dir), settings.origin_list))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.origin_list,
+    allow_methods=["GET", "POST", "PUT"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
-if __name__ == "__main__":
-    import uvicorn
+@app.get("/health")
+def health():
+    return {"ok": True}
 
-    uvicorn.run(app, host=settings.host, port=settings.port)
+
+for module in (routes_search, routes_chat, routes_files, routes_organize, routes_settings):
+    app.include_router(module.router)

@@ -1,0 +1,7 @@
+{"q": "What is the invoice total for Acme Corp?", "expect": [["4,250", "4250"]], "file": "invoice_notes.pdf"}
+{"q": "When is the Acme Corp invoice due?", "expect": [["March 3", "3rd of March", "March 3rd"]], "file": "invoice_notes.pdf"}
+{"q": "What are the payment terms on the invoice?", "expect": [["30"]], "file": "invoice_notes.pdf"}
+{"q": "What budget was approved for the Everest project?", "expect": [["120,000", "120000", "120k"]], "file": "meeting_notes.docx"}
+{"q": "Which phase does the Everest budget cover?", "expect": [["phase one", "phase 1", "first phase"]], "file": "meeting_notes.docx"}
+{"q": "What is the CEO's salary?", "no_answer": true}
+{"q": "When does the Globex contract renew?", "no_answer": true}

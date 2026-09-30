@@ -1,34 +1,17 @@
-import httpx
+import time
+
 from fastapi import APIRouter
 
-from app.config import settings
-from app.core.search import fts_search, hybrid_ranker, vector_search
-from app.db.sqlite_fts import connect as fts_connect
-from app.db.vector_store import connect as vector_connect
+from app.core.search.hybrid import hybrid_search
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-def hybrid_search(q: str) -> list[dict]:
-    conn = fts_connect(settings.db_path)
-    try:
-        fts_results = fts_search.search(conn, q)
-    finally:
-        conn.close()
-
-    # Semantic search needs the embedding model in Ollama; keyword search must still
-    # work when that's slow, unset up or not running (fresh install, nothing indexed yet).
-    vector_results: list[dict] = []
-    vdb = vector_connect(settings.vector_db_dir)
-    if "chunks" in vdb.table_names():
-        try:
-            vector_results = vector_search.search(vdb.open_table("chunks"), q)
-        except httpx.HTTPError:
-            pass
-
-    return hybrid_ranker.merge(fts_results, vector_results) if vector_results else fts_results
-
-
+# Plain def, not async: SQLite and the embedding call block, so FastAPI runs this in its
+# thread pool instead of stalling every other request on the event loop.
 @router.get("")
-async def search(q: str):
-    return {"results": hybrid_search(q)}
+def search(q: str, root: str | None = None, limit: int = 10):
+    t0 = time.perf_counter()
+    out = hybrid_search(q, root=root, limit=min(max(limit, 1), 25))
+    out["ms"] = round((time.perf_counter() - t0) * 1000)
+    return out

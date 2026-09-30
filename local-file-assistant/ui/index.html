@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' ws://localhost:5173 http://127.0.0.1:*">
 <title>Local File Assistant</title>
-<link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <main>
-    <h1>Local File Assistant</h1>
-    <button type="button" id="pick-folder">Choose folder…</button>
-    <textarea id="chat-input" rows="3" placeholder="Ask about your files…" aria-label="Chat message"></textarea>
-  </main>
+  <div id="app">
+    <aside id="sidebar"></aside>
+    <main id="content"></main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>
