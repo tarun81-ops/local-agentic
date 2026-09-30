@@ -4,13 +4,18 @@ Done
 - Vertical slice, hybrid search, verifier, organizer with reversible apply.
 - Electron app with the Modernist UI: Ask, Search, Organize, Index, Settings, and the
   Ctrl+Shift+Space overlay.
-- Parsers for PDF, docx, pptx, xlsx; OCR for images when rapidocr is installed.
+- Parsers for PDF, docx, pptx, xlsx, txt/md/csv, html, eml; OCR for images when rapidocr is installed.
 - Security: token always required, Origin check, paths confined to indexed folders.
 - Packaging: PyInstaller backend inside the NSIS installer, free port, tray.
 
 - Hardening pass (2026-09-30): schema upgrade rebuilds, RAM guard + idle unload, fast
   rescans + stop, scanned-PDF OCR, optional image captions, organizer checks for Windows
   names/long paths/links/case, Host-header check, logs, backend auto-restart, CI, eval harness.
+
+- Retrieval pass (2026-10-01): `eval/run_eval.py --retrieval` (synthetic 36-file corpus, 43
+  questions); text/HTML/email parsers; file name + folder in the embedded text; one result per
+  file on Search. Porter stemming and a bigger candidate pool were measured and left out.
+  Numbers in docs/RESEARCH-accuracy-device-learning.md.
 
 Next
 1. Run docs/TESTING-ON-WINDOWS.md on the laptop and record an eval baseline for qwen3-vl:2b.

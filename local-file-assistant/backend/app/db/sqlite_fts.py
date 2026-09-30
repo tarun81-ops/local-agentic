@@ -4,7 +4,10 @@ from pathlib import Path
 
 # Bump when the schema changes. An older index is dropped and rebuilt on the next scan,
 # which is cheap next to keeping migration code for a single-user local cache.
-SCHEMA_VERSION = 2
+# 3: vectors now embed the file name and folder too (indexer.embed_text), so the old ones go.
+# Porter stemming (tokenize = 'porter unicode61') was measured with eval/run_eval.py --retrieval
+# and cost a question without winning one; retry it against real documents before adding it.
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS roots (

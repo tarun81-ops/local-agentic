@@ -24,8 +24,9 @@ else is plain deterministic code.
 `core/indexer.py` walks each indexed folder, hashes files (streamed), parses them into
 chunks of ~250 words with 40 words of overlap (`core/chunking.py`), and stores them in
 SQLite FTS5 (`db/sqlite_fts.py`) and LanceDB (`db/vector_store.py`), embedding in batches
-of 32. Each chunk keeps its location: page (PDF), slide (pptx), sheet (xlsx), part (docx,
-which has no reliable pages) or image. Unchanged files are skipped; files gone from disk
+of 32; the embedder sees each chunk with its file name and folder in front (`embed_text`), the
+stored and cited text is the chunk alone. Each chunk keeps its location: page (PDF), slide
+(pptx), sheet (xlsx), part (docx, txt/md/csv, html, eml, which have no reliable pages) or image. Unchanged files are skipped; files gone from disk
 are pruned. If the embedder is down, files are still keyword-indexed and retried on the
 next scan. Failures are logged and listed on the Index page with the reason.
 

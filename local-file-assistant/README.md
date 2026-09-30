@@ -1,7 +1,7 @@
 # Local File Assistant
 
-Ask natural-language questions about your local files (PDF, Word, PowerPoint, Excel, and
-images with OCR) and get answers with exact file + page citations. Search, and tidy folders
+Ask natural-language questions about your local files (PDF, Word, PowerPoint, Excel, text,
+Markdown, CSV, HTML, saved emails, and images with OCR) and get answers with exact file + page citations. Search, and tidy folders
 with a plan you approve first. 100% local: nothing leaves the machine.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/ROADMAP.md](docs/ROADMAP.md),

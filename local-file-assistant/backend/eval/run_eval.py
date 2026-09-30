@@ -13,7 +13,12 @@ Each line of the questions file is JSON:
   {"q": "...", "no_answer": true}  -> the files don't contain this; the model should say so.
 
 Uses a throwaway index (never your real one) and needs Ollama running with the models pulled.
-Writes eval\\results\\<time>.json and prints a summary."""
+Writes eval\\results\\<time>.json and prints a summary.
+
+Retrieval only (no chat model, a few minutes): which file each search stage ranks first.
+    .venv\\Scripts\\python.exe eval\\run_eval.py --retrieval       # eval\\retrieval_corpus.py + retrieval_questions.jsonl
+    .venv\\Scripts\\python.exe eval\\run_eval.py --retrieval --folder "D:\\Docs" --questions mine.jsonl
+  Lines: {"q": "...", "file": "name.pdf" or ["a.pdf", "b.docx"], "kind": "keyword"}"""
 import argparse
 import json
 import os
@@ -73,17 +78,114 @@ def _median(xs):
     return round(xs[len(xs) // 2], 2) if xs else None
 
 
+STAGES = ("keyword", "semantic", "hybrid")
+ORIGINAL_TYPES = {".pdf", ".docx", ".pptx", ".xlsx"}  # indexed before the text/html/email parsers
+
+
+def rank_metrics(paths: list[str], want: str | list[str]) -> dict:
+    """File-level ranking for one question. paths: the chunks a stage returned, best first.
+    hit1: the top chunk is from an expected file. in_context: one of them is among the chunks
+    (what the chat model gets to read). rr: 1/rank of the first expected file among the
+    distinct files, 0 if absent."""
+    wants = {w.lower() for w in ([want] if isinstance(want, str) else want)}
+    files = list(dict.fromkeys(Path(p).name.lower() for p in paths))
+    rank = next((i for i, f in enumerate(files, 1) if f in wants), None)
+    return {"hit1": rank == 1, "in_context": rank is not None, "rr": 1 / rank if rank else 0.0}
+
+
+def summarize_retrieval(rows: list[dict]) -> dict:
+    """rows: {"item": {...}, "<stage>": rank_metrics(...)}. Overall per stage, then hybrid by
+    question kind, and hybrid on the file types that were always indexed."""
+    def agg(subset, stage):
+        n = len(subset)
+        return {
+            "n": n,
+            **{k: round(sum(r[stage][k] for r in subset) / n, 3) if n else None for k in ("hit1", "in_context", "rr")},
+        }
+
+    out = {stage: agg(rows, stage) for stage in STAGES if all(stage in r for r in rows)}
+    for kind in sorted({r["item"].get("kind", "-") for r in rows}):
+        out[f"hybrid/{kind}"] = agg([r for r in rows if r["item"].get("kind", "-") == kind], "hybrid")
+    out["hybrid/pdf+office"] = agg(
+        [r for r in rows if Path(_first_file(r["item"])).suffix.lower() in ORIGINAL_TYPES], "hybrid"
+    )
+    return out
+
+
+def _first_file(item: dict) -> str:
+    f = item["file"]
+    return f if isinstance(f, str) else f[0]
+
+
+def run_retrieval(args, tmp: Path) -> int:
+    from app.config import settings
+    from app.core import indexer
+    from app.core.llm.client import ollama_status
+    from app.core.search import fts_search, vector_search
+    from app.core.search.hybrid import hybrid_search
+    from app.db import sqlite_fts, vector_store
+
+    status = ollama_status()
+    if not status["connected"] or settings.embedding_model not in status["models"]:
+        print(f"Needs Ollama running with {settings.embedding_model} pulled.")
+        return 2
+    if args.folder:
+        folder = Path(args.folder)
+    else:
+        from retrieval_corpus import write
+
+        folder = write(tmp / "corpus")
+    items = [json.loads(line) for line in Path(args.questions or HERE / "retrieval_questions.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    t0 = time.perf_counter()
+    counts = indexer.index_folder(folder, settings.db_path, settings.vector_db_dir)
+    print(f"Indexed {counts['indexed']} files in {time.perf_counter() - t0:.1f}s (semantic: {counts['semantic']})")
+
+    conn = sqlite_fts.connect(settings.db_path)
+    table = vector_store.open_table(vector_store.connect(settings.vector_db_dir))
+    stages = {
+        "keyword": lambda q: fts_search.search(conn, q, limit=args.top_k),
+        "semantic": lambda q: vector_search.search(table, q, limit=args.top_k) if table is not None else [],
+        "hybrid": lambda q: hybrid_search(q, limit=args.top_k)["results"],
+    }
+    rows = []
+    for item in items:
+        row = {"item": item}
+        for name, fn in stages.items():
+            row[name] = rank_metrics([c["path"] for c in fn(item["q"])], item["file"])
+        rows.append(row)
+        print(f"{'HIT ' if row['hybrid']['hit1'] else 'top6' if row['hybrid']['in_context'] else 'MISS'}  {item['q']}")
+    conn.close()
+
+    summary = summarize_retrieval(rows)
+    out_dir = HERE / "results"
+    out_dir.mkdir(exist_ok=True)
+    label = f"-{args.label}" if args.label else ""
+    out = out_dir / f"{datetime.now():%Y%m%d-%H%M%S}-retrieval{label}.json"
+    out.write_text(json.dumps({"summary": summary, "embedding_model": settings.embedding_model, "rows": rows}, indent=2), encoding="utf-8")
+    print(f"\n{'':22} {'n':>3} {'hit@1':>6} {'top-' + str(args.top_k):>6} {'MRR':>6}")
+    for name, m in summary.items():
+        print(f"{name:22} {m['n']:>3} {m['hit1']!s:>6} {m['in_context']!s:>6} {m['rr']!s:>6}")
+    print(f"\nSaved {out}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--folder", default=str(BACKEND.parent / "test_corpus"))
-    ap.add_argument("--questions", default=str(HERE / "questions.jsonl"))
+    ap.add_argument("--folder", default=None, help="default: test_corpus, or a generated corpus with --retrieval")
+    ap.add_argument("--questions", default=None)
     ap.add_argument("--model", default=None, help="chat model (default: the one picked in Settings)")
     ap.add_argument("--top-k", type=int, default=6)
+    ap.add_argument("--retrieval", action="store_true", help="search only: rank the expected file, no chat model")
+    ap.add_argument("--label", default="", help="added to the results file name, e.g. baseline")
     args = ap.parse_args()
 
     tmp = Path(tempfile.mkdtemp(prefix="lfa-eval-"))
     os.environ.update({"DATA_DIR": str(tmp), "DB_PATH": str(tmp / "index.db"), "VECTOR_DB_DIR": str(tmp / "lancedb"), "API_TOKEN": "eval"})
     sys.path.insert(0, str(BACKEND))
+    if args.retrieval:
+        return run_retrieval(args, tmp)
+    args.folder = args.folder or str(BACKEND.parent / "test_corpus")
+    args.questions = args.questions or str(HERE / "questions.jsonl")
 
     from app.config import settings
     from app.core import indexer, memory

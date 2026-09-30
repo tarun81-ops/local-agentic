@@ -68,6 +68,17 @@ class _Run:
         self.conn.close()
 
 
+def embed_text(path: Path, root: Path, text: str) -> str:
+    """What the embedder sees for a chunk: its file name and folder, then the text. "My car
+    insurance" can then find a policy whose text says "motor" and never "car". The stored and
+    cited chunk text stays the text alone."""
+    try:
+        folder = path.parent.relative_to(root) if path.parent != root else Path(root.name)
+    except ValueError:
+        folder = Path(path.parent.name)
+    return f"File: {path.name}\nFolder: {folder.as_posix()}\n\n{text}"
+
+
 def _index_one(path: Path, root: Path, run: _Run) -> str:
     stat = path.stat()
     # Cheap check first: hashing reads the whole file, which dominates rescans of big folders.
@@ -87,7 +98,7 @@ def _index_one(path: Path, root: Path, run: _Run) -> str:
             _record_error(path, RuntimeError(f"low memory ({free} MB free): keyword index only for now, vectors added on the next scan"))
     elif chunks and run.embed_ok:
         try:
-            vectors = embed([c.text for _, c in chunks])
+            vectors = embed([embed_text(path, root, c.text) for _, c in chunks])
         except Exception as exc:
             run.embed_ok = False
             _record_error(path, RuntimeError(f"embedding model unreachable, keyword index only ({exc})"))

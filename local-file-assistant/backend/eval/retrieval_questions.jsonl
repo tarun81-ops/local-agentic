@@ -1,0 +1,43 @@
+{"q": "How much is the Initech invoice for?", "file": "invoice_initech_2024-05.pdf", "kind": "distractor"}
+{"q": "When is the Globex invoice due?", "file": "invoice_globex_2024-04.pdf", "kind": "distractor"}
+{"q": "invoice for the website redesign", "file": "invoice_acme_2024-03.pdf", "kind": "keyword"}
+{"q": "security deposit for the Green Park flat", "file": "Lease agreement B-12.pdf", "kind": "keyword"}
+{"q": "lease agreement for my flat", "file": "Lease agreement B-12.pdf", "kind": "filename"}
+{"q": "how long is the lock-in on my rental", "file": "Lease agreement B-12.pdf", "kind": "paraphrase"}
+{"q": "Zenith Systems termination notice period", "file": "vendor_contract_zenith.docx", "kind": "distractor"}
+{"q": "terminating the Zenith agreement", "file": "vendor_contract_zenith.docx", "kind": "variant"}
+{"q": "What budget was approved for Everest phase one?", "file": "everest_kickoff_meeting_notes.docx", "kind": "distractor"}
+{"q": "delays in the Everest integration", "file": "everest_phase2_review.docx", "kind": "variant"}
+{"q": "risks for launching Apollo", "file": "apollo_status_update.pptx", "kind": "variant"}
+{"q": "which sales region underperformed last quarter", "file": "q3_sales_report.xlsx", "kind": "paraphrase"}
+{"q": "mentoring interns in my appraisal", "file": "performance_review_2024.docx", "kind": "variant"}
+{"q": "what CTC was I offered when I joined", "file": "offer_letter_initech.pdf", "kind": "keyword"}
+{"q": "Priya's CV", "file": "Priya Sharma CV.docx", "kind": "filename"}
+{"q": "candidate who built churn dashboards in Power BI", "file": "Priya Sharma CV.docx", "kind": "keyword"}
+{"q": "when does my car insurance expire", "file": "car_insurance_policy_2024.pdf", "kind": "filename"}
+{"q": "which hospitals can I use without paying upfront", "file": "health_insurance_ecard.pdf", "kind": "paraphrase"}
+{"q": "sum insured on the family health policy", "file": "health_insurance_ecard.pdf", "kind": "keyword"}
+{"q": "interest rate on my house loan", "file": "home_loan_sanction_letter.pdf", "kind": "paraphrase"}
+{"q": "monthly EMI for the home loan", "file": "home_loan_sanction_letter.pdf", "kind": "keyword"}
+{"q": "deductions claimed on my taxes", "file": "itr_2023-24_summary.docx", "kind": "variant"}
+{"q": "how many units of electricity did we use in July", "file": "electricity_bill_aug_2024.pdf", "kind": "keyword"}
+{"q": "salary credited in June", "file": "bank_statement_june_2024.xlsx", "kind": "keyword"}
+{"q": "how much do I plan to spend on groceries each month", "file": "budget_2025.xlsx", "kind": "paraphrase"}
+{"q": "current value of my Nifty index fund", "file": "mutual_fund_statement_q2.xlsx", "kind": "keyword"}
+{"q": "how much did the refrigerator cost", "file": "home_inventory.xlsx", "kind": "distractor"}
+{"q": "fridge warranty", "file": "fridge_warranty.pdf", "kind": "filename"}
+{"q": "when is the society's annual general meeting", "file": "society_maintenance_notice.pdf", "kind": "keyword"}
+{"q": "gym membership validity", "file": "gym_membership_receipt.pdf", "kind": "keyword"}
+{"q": "Aarav's school fees for term 2", "file": "school_fee_receipt_term2.pdf", "kind": "keyword"}
+{"q": "PNR for the Tokyo flight", "file": "flight_confirmation_AI306.eml", "kind": "keyword"}
+{"q": "what baggage allowance do we have", "file": "flight_confirmation_AI306.eml", "kind": "paraphrase"}
+{"q": "japan trip plan day by day", "file": "japan_trip_itinerary.html", "kind": "filename"}
+{"q": "documents needed for the Japan visa", "file": "visa_documents_list.md", "kind": "keyword"}
+{"q": "how do I reset the wifi", "file": "wifi_router_notes.md", "kind": "paraphrase"}
+{"q": "family doctor's phone number", "file": "emergency_contacts.csv", "kind": "distractor"}
+{"q": "medicine the doctor gave for my allergy", "file": "doctor_visit_notes.txt", "kind": "paraphrase"}
+{"q": "what to carry for renewing my passport", "file": "passport_renewal_checklist.txt", "kind": "variant"}
+{"q": "butter chicken recipe", "file": "butter_chicken.md", "kind": "keyword"}
+{"q": "book about building small daily routines", "file": "book_notes_atomic_habits.md", "kind": "paraphrase"}
+{"q": "what should a new employee do in their first month", "file": "onboarding_checklist.md", "kind": "paraphrase"}
+{"q": "offsite schedule in Goa", "file": "team_offsite_agenda.txt", "kind": "keyword"}

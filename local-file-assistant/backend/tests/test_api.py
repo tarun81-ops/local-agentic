@@ -59,6 +59,8 @@ def test_index_search_organize_undo_flow(client, corpus, monkeypatch):
     found = client.get("/search", params={"q": "What is the invoice total for Acme Corp?"}, headers=AUTH).json()
     assert found["results"][0]["name"] == "invoice_notes.pdf"
     assert found["results"][0]["snippet"]
+    paths = [r["path"] for r in found["results"]]
+    assert len(paths) == len(set(paths))  # one row per file, though both invoice pages match
 
     # A duplicate for the plan to find, and a model suggestion for the rest.
     (corpus / "invoice_copy.pdf").write_bytes((corpus / "invoice_notes.pdf").read_bytes())

@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval"))
-from run_eval import score, summarize  # noqa: E402
+from run_eval import rank_metrics, score, summarize, summarize_retrieval  # noqa: E402
 
 CHUNKS = [{"path": "C:/docs/invoice_notes.pdf"}, {"path": "C:/docs/meeting_notes.docx"}]
 
@@ -36,3 +36,22 @@ def test_summary():
     s = summarize(rows)
     assert s["answer_correct"] == 1.0 and s["retrieval_top1"] == 0.0 and s["no_answer_handled"] == 0.0
     assert s["median_total_s"] == 4.0
+
+
+def test_rank_metrics_are_per_file_not_per_chunk():
+    chunks = ["C:/d/a.pdf", "C:/d/a.pdf", "C:/d/B.docx", "C:/d/c.txt"]
+    assert rank_metrics(chunks, "b.docx") == {"hit1": False, "in_context": True, "rr": 0.5}  # 2nd file, not 3rd chunk
+    assert rank_metrics(chunks, ["x.pdf", "a.pdf"])["hit1"]
+    assert rank_metrics(chunks, "missing.pdf") == {"hit1": False, "in_context": False, "rr": 0.0}
+
+
+def test_summarize_retrieval_splits_by_kind_and_file_type():
+    hit, miss = {"hit1": True, "in_context": True, "rr": 1.0}, {"hit1": False, "in_context": False, "rr": 0.0}
+    rows = [
+        {"item": {"file": "a.pdf", "kind": "keyword"}, "keyword": hit, "semantic": miss, "hybrid": hit},
+        {"item": {"file": "n.md", "kind": "paraphrase"}, "keyword": miss, "semantic": hit, "hybrid": miss},
+    ]
+    s = summarize_retrieval(rows)
+    assert s["hybrid"] == {"n": 2, "hit1": 0.5, "in_context": 0.5, "rr": 0.5}
+    assert s["hybrid/keyword"]["hit1"] == 1.0 and s["hybrid/paraphrase"]["hit1"] == 0.0
+    assert s["hybrid/pdf+office"] == {"n": 1, "hit1": 1.0, "in_context": 1.0, "rr": 1.0}

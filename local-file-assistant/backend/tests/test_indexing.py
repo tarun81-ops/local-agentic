@@ -91,3 +91,51 @@ def test_office_lock_files_are_ignored(corpus):
     doc.add_paragraph("lock")
     doc.save(corpus / "~$meeting_notes.docx")
     assert not indexer.is_indexable(corpus / "~$meeting_notes.docx")
+
+
+def test_text_html_and_email_parsers(tmp_path):
+    from email.message import EmailMessage
+
+    from app.core.parsers import text_parser
+
+    (tmp_path / "notes.md").write_text("# Router\nAdmin page: 192.168.0.1", encoding="utf-8")
+    (tmp_path / "old.txt").write_bytes("Café receipt".encode("cp1252"))  # not valid UTF-8
+    (tmp_path / "page.html").write_text(
+        "<html><head><title>Trip</title><style>p{}</style></head><body><p>Kyoto &amp; Osaka</p>"
+        "<script>var secret = 1;</script></body></html>",
+        encoding="utf-8",
+    )
+    msg = EmailMessage()
+    msg["Subject"], msg["From"] = "Booking confirmed - PNR K7XQ2L", "Air India <a@example.com>"
+    msg.set_content("Baggage: 2 x 23 kg")
+    (tmp_path / "flight.eml").write_bytes(bytes(msg))
+
+    text = {p.name: "\n".join(c.text for c in PARSERS[p.suffix](p)) for p in tmp_path.iterdir()}
+    assert "192.168.0.1" in text["notes.md"]
+    assert text["old.txt"] == "Café receipt"
+    assert "Kyoto & Osaka" in text["page.html"] and "Trip" in text["page.html"]
+    assert "secret" not in text["page.html"] and "p{}" not in text["page.html"]
+    assert "PNR K7XQ2L" in text["flight.eml"] and "2 x 23 kg" in text["flight.eml"]
+    assert all(c.loc_kind == "part" for c in PARSERS[".eml"](tmp_path / "flight.eml"))
+
+    # The size cap can cut a multi-byte character in half; that must not turn the file into cp1252 mojibake.
+    big = tmp_path / "big.txt"
+    big.write_bytes(b"a" * (text_parser.MAX_TEXT_BYTES - 1) + "é".encode("utf-8"))
+    assert set(text_parser._read(big)) == {"a"}
+
+
+def test_embedder_sees_file_and_folder_but_stored_text_does_not(tmp_path, db_paths, monkeypatch):
+    from app.db import vector_store
+
+    db, vdb = db_paths
+    seen: list[str] = []
+    fake = indexer.embed
+    monkeypatch.setattr(indexer, "embed", lambda texts, **kw: seen.extend(texts) or fake(texts))
+    root = tmp_path / "docs"
+    (root / "Insurance").mkdir(parents=True)
+    (root / "Insurance" / "car_policy.txt").write_text("Motor package policy", encoding="utf-8")
+
+    indexer.index_folder(root, db, vdb)
+    assert seen == ["File: car_policy.txt\nFolder: Insurance\n\nMotor package policy"]
+    stored = vector_store.open_table(vector_store.connect(vdb)).to_arrow().column("text").to_pylist()
+    assert stored == ["Motor package policy"]  # what answers and citations are checked against
