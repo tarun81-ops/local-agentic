@@ -139,6 +139,10 @@ def run_retrieval(args, tmp: Path) -> int:
     t0 = time.perf_counter()
     counts = indexer.index_folder(folder, settings.db_path, settings.vector_db_dir)
     print(f"Indexed {counts['indexed']} files in {time.perf_counter() - t0:.1f}s (semantic: {counts['semantic']})")
+    if counts["keyword_only"]:
+        # Scoring a half-embedded index would look like a real (worse) result.
+        print(f"{counts['keyword_only']} files got no vectors (low memory or the embedder failed). Free some RAM and run again.")
+        return 2
 
     conn = sqlite_fts.connect(settings.db_path)
     table = vector_store.open_table(vector_store.connect(settings.vector_db_dir))

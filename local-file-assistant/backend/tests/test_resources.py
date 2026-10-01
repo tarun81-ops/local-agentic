@@ -13,9 +13,11 @@ def test_low_memory_indexes_keywords_only_and_retries_later(corpus, db_paths, mo
     monkeypatch.setattr(memory, "is_low", lambda: True)
     counts = indexer.index_folder(corpus, db, vdb)
     assert counts["indexed"] == 2
+    assert counts["keyword_only"] == 2 and not counts["semantic"]  # the scan says what it skipped
     conn = sqlite_fts.connect(db)
     try:
         hashes = {r[0] for r in conn.execute("SELECT hash FROM files")}
+        assert sqlite_fts.list_roots(conn)[0]["keyword_only"] == 2
     finally:
         conn.close()
     assert hashes == {""}  # blank = vectors still owed; next scan retries
@@ -24,6 +26,15 @@ def test_low_memory_indexes_keywords_only_and_retries_later(corpus, db_paths, mo
     monkeypatch.setattr(memory, "is_low", lambda: False)
     again = indexer.index_folder(corpus, db, vdb)
     assert again["indexed"] == 2 and again["skipped"] == 0
+    assert again["keyword_only"] == 0 and again["semantic"]
+
+
+def test_chat_client_has_a_timeout_and_no_silent_retries():
+    from app.core.llm.client import get_client
+
+    client = get_client()
+    assert client.max_retries == 0
+    assert client.timeout.read == settings.llm_timeout_s and client.timeout.connect == 5
 
 
 def test_idle_unload_timing(monkeypatch):

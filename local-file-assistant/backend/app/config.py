@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # "ollama", or "openai" for any OpenAI-compatible server (e.g. OpenVINO Model Server on
     # the NPU/iGPU): chat and embeddings then both go to ollama_base_url's /v1 API.
     llm_provider: str = "ollama"
+    # Longest wait for the chat model: between streamed tokens, or for a whole non-streamed
+    # reply (the organizer's plan). Generous because a CPU can take minutes; the SDK default
+    # is 10 minutes with two silent retries.
+    llm_timeout_s: int = 300
 
     # RAM: unload the chat model after this many idle seconds (0 = never), keep the embedder
     # only briefly after indexing, and skip embeddings while free RAM is below this.

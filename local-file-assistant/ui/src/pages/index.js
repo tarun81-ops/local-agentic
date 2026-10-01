@@ -42,7 +42,10 @@ export function render(container) {
         ? `Scanning — ${r.progress.seen.toLocaleString()} files checked, ${r.progress.indexed.toLocaleString()} new or changed${
             r.progress.files_per_min ? ` · ${Math.round(r.progress.files_per_min).toLocaleString()} files/min` : ''
           }`
-        : `${r.files.toLocaleString()} files · ${fmtBytes(r.bytes)}${r.last_scan ? ` · last scan ${fmtDate(r.last_scan)}` : ''}`;
+        : `${r.files.toLocaleString()} files · ${fmtBytes(r.bytes)}${r.last_scan ? ` · last scan ${fmtDate(r.last_scan)}` : ''}${
+            // Indexed without vectors (low memory, or the embedding model was down): rescan to finish.
+            r.keyword_only ? ` · ${r.keyword_only.toLocaleString()} keyword-only, rescan to add semantic search` : ''
+          }`;
     const remove = el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Stop indexing ${r.path}` }, svg(ICONS.close, 14));
     const actions = el(
       'div',

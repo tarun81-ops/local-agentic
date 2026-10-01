@@ -30,7 +30,7 @@ def _conn():
 
 # One index run at a time: a single-user local app, not a job queue.
 _status_lock = threading.Lock()
-_COUNTS = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0}
+_COUNTS = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0, "keyword_only": 0}
 _status = {"state": "idle", "folder": None, "queue": [], "started": None, "error": None, **_COUNTS}
 
 

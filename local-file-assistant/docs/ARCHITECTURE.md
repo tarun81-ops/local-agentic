@@ -30,6 +30,12 @@ stored and cited text is the chunk alone. Each chunk keeps its location: page (P
 are pruned. If the embedder is down, files are still keyword-indexed and retried on the
 next scan. Failures are logged and listed on the Index page with the reason.
 
+Two rules keep the two stores honest. A file's content hash is written last (`mark_complete`),
+after its vectors, so anything that fails or crashes part-way is retried by the next scan; a
+blank hash means "keyword-only for now" and is counted per folder on the Index page. And a
+file's chunks occupy one rowid range (`file id * CHUNKS_PER_FILE + chunk number`), because FTS5
+reaches rowids through an index while `WHERE path = ?` reads the whole table.
+
 Rescans skip files whose size and modified time are unchanged without reading them. A
 scan can be stopped from the Index page (nothing is pruned on a partial walk). When free RAM
 is below `MIN_FREE_RAM_MB` (default 1200), files are keyword-indexed only and get their

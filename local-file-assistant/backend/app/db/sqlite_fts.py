@@ -7,7 +7,12 @@ from pathlib import Path
 # 3: vectors now embed the file name and folder too (indexer.embed_text), so the old ones go.
 # Porter stemming (tokenize = 'porter unicode61') was measured with eval/run_eval.py --retrieval
 # and cost a question without winning one; retry it against real documents before adding it.
-SCHEMA_VERSION = 3
+# 4: chunk rowids are file id * CHUNKS_PER_FILE + chunk number.
+SCHEMA_VERSION = 4
+
+# A file's chunks are one rowid range. FTS5 reaches a rowid through an index, while
+# "WHERE path = ?" reads the whole table (40 ms per file at 60k chunks, measured).
+CHUNKS_PER_FILE = 1_000_000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS roots (
@@ -85,27 +90,44 @@ def file_unchanged(conn: sqlite3.Connection, path: Path, size: int, mtime: float
     return row is not None and row[0] != "" and row[1] == size and abs(row[2] - mtime) < 1e-6
 
 
-def upsert_file(conn, path: Path, root: Path, file_hash: str, size: int, mtime: float, chunks) -> None:
-    """chunks: iterable of (chunk_no, Chunk)."""
+def _chunk_rowids(file_id: int) -> tuple[int, int]:
+    return file_id * CHUNKS_PER_FILE, (file_id + 1) * CHUNKS_PER_FILE - 1
+
+
+def upsert_file(conn, path: Path, root: Path, size: int, mtime: float, chunks) -> None:
+    """Replaces a file's chunks. chunks: iterable of (chunk_no, Chunk). The hash is left blank
+    ("not finished"): mark_complete sets it once the vectors are stored too."""
     p = str(path)
+    chunks = list(chunks)
+    if len(chunks) > CHUNKS_PER_FILE:
+        raise ValueError(f"{len(chunks)} chunks is more than one file can hold in the index")
     with conn:
-        conn.execute("DELETE FROM chunks WHERE path = ?", (p,))
-        conn.executemany(
-            "INSERT INTO chunks (path, loc_kind, loc_no, chunk_no, text) VALUES (?, ?, ?, ?, ?)",
-            [(p, c.loc_kind, c.loc_no, n, c.text) for n, c in chunks],
-        )
         conn.execute(
-            "INSERT INTO files (path, root, hash, size, mtime, indexed_at) VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(path) DO UPDATE SET root=excluded.root, hash=excluded.hash, size=excluded.size, "
+            "INSERT INTO files (path, root, hash, size, mtime, indexed_at) VALUES (?, ?, '', ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET root=excluded.root, hash='', size=excluded.size, "
             "mtime=excluded.mtime, indexed_at=excluded.indexed_at",
-            (p, str(root), file_hash, size, mtime, _now()),
+            (p, str(root), size, mtime, _now()),
         )
+        first, last = _chunk_rowids(conn.execute("SELECT rowid FROM files WHERE path = ?", (p,)).fetchone()[0])
+        conn.execute("DELETE FROM chunks WHERE rowid BETWEEN ? AND ?", (first, last))
+        conn.executemany(
+            "INSERT INTO chunks (rowid, path, loc_kind, loc_no, chunk_no, text) VALUES (?, ?, ?, ?, ?, ?)",
+            [(first + n, p, c.loc_kind, c.loc_no, n, c.text) for n, c in chunks],
+        )
+
+
+def mark_complete(conn: sqlite3.Connection, path: Path | str, file_hash: str) -> None:
+    """The file is fully indexed (vectors included), so later scans may skip it while unchanged."""
+    with conn:
+        conn.execute("UPDATE files SET hash = ? WHERE path = ?", (file_hash, str(path)))
 
 
 def delete_file(conn: sqlite3.Connection, path: Path | str) -> None:
     with conn:
-        conn.execute("DELETE FROM chunks WHERE path = ?", (str(path),))
-        conn.execute("DELETE FROM files WHERE path = ?", (str(path),))
+        row = conn.execute("SELECT rowid FROM files WHERE path = ?", (str(path),)).fetchone()
+        if row:
+            conn.execute("DELETE FROM chunks WHERE rowid BETWEEN ? AND ?", _chunk_rowids(row[0]))
+            conn.execute("DELETE FROM files WHERE path = ?", (str(path),))
 
 
 def indexed_paths(conn: sqlite3.Connection, root: Path | str | None = None) -> list[str]:
@@ -118,9 +140,13 @@ def is_indexed(conn: sqlite3.Connection, path: Path | str) -> bool:
     return conn.execute("SELECT 1 FROM files WHERE path = ?", (str(path),)).fetchone() is not None
 
 
-def first_text(conn: sqlite3.Connection, path: str, chars: int = 200) -> str:
-    row = conn.execute("SELECT text FROM chunks WHERE path = ? AND chunk_no = 0", (path,)).fetchone()
-    return (row[0] or "")[:chars] if row else ""
+def first_texts(conn: sqlite3.Connection, root: str, chars: int = 200) -> dict[str, str]:
+    """The start of each file's text in a folder, in one query (files with no text are absent)."""
+    rows = conn.execute(
+        "SELECT f.path, substr(c.text, 1, ?) FROM files f JOIN chunks c ON c.rowid = f.rowid * ? WHERE f.root = ?",
+        (chars, CHUNKS_PER_FILE, root),
+    )
+    return {r[0]: r[1] or "" for r in rows}
 
 
 def list_files(conn: sqlite3.Connection, root: str | None = None, limit: int = 5000) -> list[dict]:
@@ -144,7 +170,8 @@ def remove_root(conn: sqlite3.Connection, root: str) -> list[str]:
     """Forgets a folder and its index entries (never touches the files). Returns removed paths."""
     paths = indexed_paths(conn, root)
     with conn:
-        conn.execute("DELETE FROM chunks WHERE path IN (SELECT path FROM files WHERE root = ?)", (root,))
+        for (file_id,) in conn.execute("SELECT rowid FROM files WHERE root = ?", (root,)).fetchall():
+            conn.execute("DELETE FROM chunks WHERE rowid BETWEEN ? AND ?", _chunk_rowids(file_id))
         conn.execute("DELETE FROM files WHERE root = ?", (root,))
         conn.execute("DELETE FROM roots WHERE path = ?", (root,))
     return paths
@@ -161,7 +188,9 @@ def mark_scanned(conn: sqlite3.Connection, root: Path) -> None:
 
 def list_roots(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        "SELECT r.path, r.added_at, r.last_scan, COUNT(f.path) AS files, COALESCE(SUM(f.size), 0) AS bytes "
+        "SELECT r.path, r.added_at, r.last_scan, COUNT(f.path) AS files, COALESCE(SUM(f.size), 0) AS bytes, "
+        # A blank hash = indexed for keyword search but still without vectors (see mark_complete).
+        "COALESCE(SUM(f.hash = ''), 0) AS keyword_only "
         "FROM roots r LEFT JOIN files f ON f.root = r.path GROUP BY r.path ORDER BY r.added_at"
     )
     return [dict(r) for r in rows]

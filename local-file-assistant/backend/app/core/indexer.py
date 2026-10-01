@@ -63,6 +63,7 @@ class _Run:
         self.table = vector_store.open_table(self.vdb)
         self.embed_ok = True
         self.low_memory_noted = False
+        self.keyword_only = 0  # files indexed without vectors in this pass (embedder down, low RAM)
 
     def close(self):
         self.conn.close()
@@ -104,9 +105,9 @@ def _index_one(path: Path, root: Path, run: _Run) -> str:
             _record_error(path, RuntimeError(f"embedding model unreachable, keyword index only ({exc})"))
 
     with WRITE_LOCK:
-        # Without vectors the hash is stored blank, so the next scan retries this file.
-        stored_hash = file_hash if (vectors is not None or not chunks) else ""
-        sqlite_fts.upsert_file(run.conn, path, root, stored_hash, stat.st_size, stat.st_mtime, chunks)
+        # The hash goes in last (mark_complete), after the vectors: until then the file counts
+        # as unfinished, so a failure or crash anywhere before that is retried on the next scan.
+        sqlite_fts.upsert_file(run.conn, path, root, stat.st_size, stat.st_mtime, chunks)
         if vectors is not None:
             if run.table is None:
                 run.table = vector_store.get_or_create_table(run.vdb, dim=len(vectors[0]))
@@ -125,6 +126,10 @@ def _index_one(path: Path, root: Path, run: _Run) -> str:
             vector_store.upsert(run.table, str(path), rows)
         elif run.table is not None:
             vector_store.delete_path(run.table, str(path))
+        if vectors is not None or not chunks:
+            sqlite_fts.mark_complete(run.conn, path, file_hash)
+        else:
+            run.keyword_only += 1  # searchable by keyword; vectors on the next scan
     return "indexed"
 
 
@@ -145,7 +150,7 @@ def index_folder(
     no longer exist there."""
     folder = folder.resolve()
     run = _Run(db_path, vector_db_dir)
-    counts = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0}
+    counts = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0, "keyword_only": 0}
     cancelled = False
     try:
         sqlite_fts.add_root(run.conn, folder)
@@ -164,6 +169,7 @@ def index_folder(
                 _record_error(path, exc)
                 status = "failed"
             counts[status] += 1
+            counts["keyword_only"] = run.keyword_only
             if on_progress:
                 on_progress(dict(counts))
 
@@ -175,7 +181,7 @@ def index_folder(
             sqlite_fts.mark_scanned(run.conn, folder)
     finally:
         run.close()
-    counts["semantic"] = run.embed_ok
+    counts["semantic"] = run.embed_ok and run.keyword_only == 0  # every file got its vectors
     counts["cancelled"] = cancelled
     return counts
 

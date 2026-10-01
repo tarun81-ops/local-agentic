@@ -32,8 +32,9 @@ def plan(req: PlanRequest) -> OrganizePlan:
     conn = sqlite_fts.connect(settings.db_path)
     try:
         files = sqlite_fts.list_files(conn, root)
+        hints = sqlite_fts.first_texts(conn, root)
         for f in files:
-            f["hint"] = sqlite_fts.first_text(conn, f["path"])
+            f["hint"] = hints.get(f["path"], "")
         dups = sqlite_fts.duplicate_groups(conn, root)
     finally:
         conn.close()

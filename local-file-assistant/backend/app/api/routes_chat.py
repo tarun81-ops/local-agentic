@@ -31,7 +31,12 @@ def _public(chunk: dict) -> dict:
 def _stream(req: ChatRequest):
     # Search resolves before any LLM call, so the UI shows matching files straight away
     # even while the model is still loading.
-    found = hybrid_search(req.question, root=req.root, limit=6)
+    try:
+        found = hybrid_search(req.question, root=req.root, limit=6)
+    except Exception as exc:  # e.g. a locked or damaged index: say so, don't leave "Searching…" up
+        log.exception("search failed")
+        yield _sse("error", {"detail": f"Couldn't search your files: {exc}"})
+        return
     chunks = found["results"]
     yield _sse("results", {"results": [_public(c) for c in chunks], "semantic": found["semantic"]})
 

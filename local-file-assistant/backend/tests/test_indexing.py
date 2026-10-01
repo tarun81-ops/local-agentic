@@ -139,3 +139,47 @@ def test_embedder_sees_file_and_folder_but_stored_text_does_not(tmp_path, db_pat
     assert seen == ["File: car_policy.txt\nFolder: Insurance\n\nMotor package policy"]
     stored = vector_store.open_table(vector_store.connect(vdb)).to_arrow().column("text").to_pylist()
     assert stored == ["Motor package policy"]  # what answers and citations are checked against
+
+
+def test_file_whose_vectors_failed_to_store_is_retried(corpus, db_paths, monkeypatch):
+    from app.db import vector_store
+
+    db, vdb = db_paths
+    real = vector_store.upsert
+
+    def disk_full(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vector_store, "upsert", disk_full)
+    assert indexer.index_folder(corpus, db, vdb)["failed"] == 2
+
+    # The hash used to be stored before the vectors, so these files were skipped for good.
+    monkeypatch.setattr(vector_store, "upsert", real)
+    again = indexer.index_folder(corpus, db, vdb)
+    assert again["indexed"] == 2 and again["skipped"] == 0
+    table = vector_store.open_table(vector_store.connect(vdb))
+    assert len(set(table.to_arrow().column("path").to_pylist())) == 2
+
+
+def test_reindex_and_delete_touch_only_that_files_chunks(tmp_path, db_paths):
+    from pathlib import Path
+
+    db, vdb = db_paths
+    root = (tmp_path / "docs").resolve()
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one", encoding="utf-8")
+    (root / "b.txt").write_text("bravo two", encoding="utf-8")
+    indexer.index_folder(root, db, vdb)
+    (root / "a.txt").write_text("alpha changed entirely", encoding="utf-8")
+    indexer.index_folder(root, db, vdb)
+
+    conn = sqlite_fts.connect(db)
+    try:
+        texts = {Path(r[0]).name: r[1] for r in conn.execute("SELECT path, text FROM chunks")}
+        assert texts == {"a.txt": "alpha changed entirely", "b.txt": "bravo two"}  # replaced, not duplicated
+        assert {Path(p).name: t for p, t in sqlite_fts.first_texts(conn, str(root)).items()} == texts
+        assert [Path(r[0]).name for r in conn.execute("SELECT path FROM chunks WHERE chunks MATCH 'bravo'")] == ["b.txt"]
+        sqlite_fts.delete_file(conn, root / "a.txt")
+        assert [Path(r[0]).name for r in conn.execute("SELECT path FROM chunks")] == ["b.txt"]
+    finally:
+        conn.close()

@@ -12,7 +12,13 @@ _lock = threading.Lock()
 
 def get_client() -> OpenAI:
     """Ollama's OpenAI-compatible endpoint. Swap base_url to move to OpenVINO Model Server."""
-    return OpenAI(base_url=settings.ollama_base_url, api_key="ollama")
+    # No retries: a second attempt doubles the wait, and the caller reports the failure anyway.
+    return OpenAI(
+        base_url=settings.ollama_base_url,
+        api_key="ollama",
+        timeout=httpx.Timeout(settings.llm_timeout_s, connect=5),
+        max_retries=0,
+    )
 
 
 def current_model() -> str:

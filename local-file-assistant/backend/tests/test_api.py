@@ -104,3 +104,44 @@ def test_open_only_opens_indexed_files(client, tmp_path):
     stray = tmp_path / "evil.bat"
     stray.write_text("echo hi")
     assert client.post("/files/open", json={"path": str(stray)}, headers=AUTH).status_code == 404
+
+
+def _events(body: str) -> list[tuple[str, dict]]:
+    import json
+
+    out = []
+    for message in body.strip().split("\n\n"):  # SSE: "event: <kind>\ndata: <json>"
+        kind, data = message.split("\n", 1)
+        out.append((kind.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
+    return out
+
+
+def test_chat_reports_a_search_failure_instead_of_hanging(client, monkeypatch):
+    from app.api import routes_chat
+
+    def locked(*a, **k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(routes_chat, "hybrid_search", locked)
+    events = _events(client.post("/chat", json={"question": "x"}, headers=AUTH).text)
+    assert [kind for kind, _ in events] == ["error"] and "database is locked" in events[0][1]["detail"]
+
+
+def test_chat_streams_results_tokens_then_a_checked_done(client, monkeypatch):
+    from app.api import routes_chat
+
+    chunk = {"path": "C:/d/invoice.pdf", "name": "invoice.pdf", "loc_kind": "page", "loc_no": 1, "match": "both",
+             "snippet": "total $4,250", "text": "The invoice total for Acme Corp is $4,250."}
+    monkeypatch.setattr(routes_chat, "hybrid_search", lambda q, root=None, limit=6: {"results": [chunk], "semantic": True})
+
+    def answer(question, chunks, model=None):
+        yield "Acme Corp owes $4,250 "
+        yield "(invoice.pdf, page 1)."
+        return True  # the model hit its token cap
+
+    monkeypatch.setattr(routes_chat, "answer_stream", answer)
+    events = _events(client.post("/chat", json={"question": "total?"}, headers=AUTH).text)
+    kinds = [kind for kind, _ in events]
+    assert kinds[0] == "results" and kinds.count("token") == 2 and kinds[-1] == "done"
+    done = events[-1][1]
+    assert done["all_verified"] and done["truncated"] and done["citations"][0]["status"] == "checked"
