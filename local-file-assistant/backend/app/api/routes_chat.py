@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.core import ram
+from app.core import personalize, ram
 from datetime import datetime
 
 from app.core.assistant import actions, conversation, memory_store, prompts, tasks
@@ -13,7 +13,7 @@ from app.core.assistant.tools import intents
 from app.core.assistant.tools.registry import ToolError
 from app.core.assistant.router import memory_command, needs_rewrite, route, task_intent
 from app.core.llm.answerer import answer_stream, chat_stream, rewrite_query
-from app.core.llm.verifier import verify
+from app.core.llm.verifier import STRICT_THRESHOLD, THRESHOLD, verify
 from app.core.search.hybrid import hybrid_search
 
 log = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class ChatRequest(BaseModel):
     mode: str = "auto"  # "auto" | "files" | "chat"
     root: str | None = None
     model: str | None = None
+    style: str | None = None  # one-question override of the saved answer style
     context: dict | None = None  # {app, title, selection} captured from the window in front
 
 
@@ -144,8 +145,11 @@ def _stream(req: ChatRequest, conv: dict | None):
 
     answer = ""
     truncated = False
-    prompt = prompts.with_memory(prompts.with_context(req.message, req.context), remembered)  # the search used the bare message; the model also sees the screen
-    deltas = answer_stream(prompt, chunks, history, model=req.model) if kind == "files" else chat_stream(prompt, history, model=req.model)
+    pz = personalize.get_all()
+    style = prompts.style_instruction(req.style if req.style in personalize.STYLES else pz["answer_style"], pz["language"], pz["cite_pages"])
+    # Order: screen context, profile, memory, then the message. The search used the bare message.
+    prompt = prompts.with_memory(prompts.with_profile(prompts.with_context(req.message, req.context), pz["profile"]), remembered)
+    deltas = answer_stream(prompt, chunks, history, model=req.model, style=style) if kind == "files" else chat_stream(prompt, history, model=req.model, style=style)
     try:
         for what, value in _generate(deltas):
             if what == "token":
@@ -159,7 +163,7 @@ def _stream(req: ChatRequest, conv: dict | None):
         return
 
     if kind == "files":
-        result = verify(answer, chunks)
+        result = verify(answer, chunks, STRICT_THRESHOLD if pz["verifier_strict"] == "strict" else THRESHOLD)
         # Attach a snippet to each cited source for the source cards.
         snippets = {(c["path"], c["loc_kind"], int(c["loc_no"])): c["snippet"] for c in chunks}
         for cit in result["citations"]:

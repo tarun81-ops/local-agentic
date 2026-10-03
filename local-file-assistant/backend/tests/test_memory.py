@@ -115,7 +115,7 @@ def test_recalled_facts_reach_the_prompt_and_are_reported(client, monkeypatch):
     memory_store.add("The user's sister is called Priya")
     seen = []
 
-    def fake_chat(message, history=None, model=None):
+    def fake_chat(message, history=None, model=None, style=""):
         seen.append(message)
         yield "ok"
         return False

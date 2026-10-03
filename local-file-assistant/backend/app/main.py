@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import routes_actions, routes_chat, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_proactive, routes_search, routes_settings, routes_tasks, routes_voice
+from app.api import routes_actions, routes_chat, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_personalize, routes_proactive, routes_search, routes_settings, routes_tasks, routes_voice
 from app.config import settings
 from app.core.assistant import memory_extract, scheduler
 from app.core.llm import idle
@@ -69,5 +69,5 @@ def health():
     return {"ok": True}
 
 
-for module in (routes_search, routes_actions, routes_chat, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_proactive, routes_settings, routes_tasks, routes_voice):
+for module in (routes_search, routes_actions, routes_chat, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_personalize, routes_proactive, routes_settings, routes_tasks, routes_voice):
     app.include_router(module.router)

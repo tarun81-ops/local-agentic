@@ -11,7 +11,7 @@ or (notes.docx, part 1). Never invent a label. If the excerpts don't contain the
 {context}
 
 Question: {question}
-"""
+{style}"""
 
 MAX_ANSWER_TOKENS = 500  # bounds worst-case latency on a runaway/repetitive generation
 
@@ -21,9 +21,9 @@ def label(chunk: dict) -> str:
     return f"{Path(chunk['path']).name}, {chunk['loc_kind']} {chunk['loc_no']}"
 
 
-def _messages(question: str, chunks: list[dict], history: list[dict] | None = None) -> list[dict]:
+def _messages(question: str, chunks: list[dict], history: list[dict] | None = None, style: str = "") -> list[dict]:
     context = "\n\n".join(f"[{label(c)}]\n{c['text']}" for c in chunks)
-    return [*(history or []), {"role": "user", "content": PROMPT.format(context=context, question=question)}]
+    return [*(history or []), {"role": "user", "content": PROMPT.format(context=context, question=question, style=style)}]
 
 
 def _stream(messages: list[dict], model: str | None):
@@ -46,14 +46,16 @@ def _stream(messages: list[dict], model: str | None):
     return truncated
 
 
-def answer_stream(question: str, chunks: list[dict], history: list[dict] | None = None, model: str | None = None):
-    """File mode: answers from the excerpts only. Same delta/return convention as _stream."""
-    return (yield from _stream(_messages(question, chunks, history), model))
+def answer_stream(question: str, chunks: list[dict], history: list[dict] | None = None, model: str | None = None, style: str = ""):
+    """File mode: answers from the excerpts only. Same delta/return convention as _stream.
+    `style` is a ready-made prompts.style_instruction line; empty keeps the old prompt."""
+    return (yield from _stream(_messages(question, chunks, history, style), model))
 
 
-def chat_stream(message: str, history: list[dict] | None = None, model: str | None = None):
+def chat_stream(message: str, history: list[dict] | None = None, model: str | None = None, style: str = ""):
     """General chat: no excerpts, no citations."""
-    return (yield from _stream([{"role": "system", "content": prompts.CHAT_SYSTEM}, *(history or []), {"role": "user", "content": message}], model))
+    system = f"{prompts.CHAT_BASE} {style}" if style else prompts.CHAT_SYSTEM
+    return (yield from _stream([{"role": "system", "content": system}, *(history or []), {"role": "user", "content": message}], model))
 
 
 def rewrite_query(message: str, history: list[dict], model: str | None = None) -> str:

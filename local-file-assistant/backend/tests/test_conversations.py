@@ -64,7 +64,7 @@ def test_chat_persists_and_follow_up_gets_history(client, monkeypatch):
 
     seen = []
 
-    def fake_chat(message, history=None, model=None):
+    def fake_chat(message, history=None, model=None, style=""):
         seen.append(history)
         yield "Paris."
         return False
@@ -84,7 +84,7 @@ def test_auto_with_no_file_hit_answers_as_chat_and_files_mode_reports_no_results
     from app.api import routes_chat
 
     monkeypatch.setattr(routes_chat, "hybrid_search", lambda q, root=None, limit=6: {"results": [], "semantic": False})
-    monkeypatch.setattr(routes_chat, "chat_stream", lambda m, h=None, model=None: iter(["ok"]))
+    monkeypatch.setattr(routes_chat, "chat_stream", lambda m, h=None, model=None, style="": iter(["ok"]))
     kinds = [k for k, _ in _events(client.post("/chat", json={"message": "hello"}, headers=AUTH).text)]
     assert kinds[0] == "route" and "results" not in kinds
     ev = _events(client.post("/chat", json={"message": "hello", "mode": "files"}, headers=AUTH).text)
