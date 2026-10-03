@@ -16,6 +16,7 @@ export function render(container, { onStatusChanged }) {
   const shortcut = el('span', { class: 'keys' });
   const shortcutInput = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Alt+Space', 'aria-label': 'New shortcut' });
   const shortcutSet = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
+  const meBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const proBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const voiceBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const learnBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
@@ -26,6 +27,7 @@ export function render(container, { onStatusChanged }) {
       'div',
       { class: 'page-body sections' },
       flash,
+      el('section', {}, sectionHead('00', 'ABOUT ME & ANSWERS'), meBox),
       el('section', {}, sectionHead('01', 'MODEL & BACKEND'), model),
       el(
         'div',
@@ -201,6 +203,54 @@ export function render(container, { onStatusChanged }) {
       learnBox.replaceChildren(notice(e.message, 'error'));
     }
   }
+  // Personalization: what the assistant knows about you and how it answers. Everything is optional and stays on this PC.
+  async function loadMe() {
+    try {
+      const c = await api.personalize();
+      const profile = el('textarea', { id: 'pz-profile', class: 'field', rows: 4, maxlength: 800, placeholder: 'e.g. First-year ETE student in Raipur. Working on a robotics project. I like short answers with examples.' });
+      profile.value = c.profile;
+      const count = el('div', { class: 'quiet' }, `${c.profile.length} / 800`);
+      profile.addEventListener('input', () => (count.textContent = `${profile.value.length} / 800`));
+      const select = (id, label, key, options, value) => {
+        const input = el('select', { id, class: 'field field-mono' }, ...options.map(([v, t]) => el('option', { value: v, selected: v === value }, t)));
+        input.dataset.key = key;
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const sw = (id, label, key, value) => {
+        const input = el('input', { id, type: 'checkbox', class: 'toggle', role: 'switch' });
+        input.checked = value;
+        input.dataset.key = key;
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SAVE');
+      const out = el('div');
+      meBox.replaceChildren(
+        el('label', { for: 'pz-profile' }, 'ABOUT ME (SHARED WITH THE LOCAL MODEL ON EVERY QUESTION; NEVER LEAVES THIS PC)'),
+        profile,
+        count,
+        select('pz-style', 'ANSWER STYLE', 'answer_style', [['concise', 'CONCISE'], ['detailed', 'DETAILED'], ['study', 'STUDY'], ['simple', 'SIMPLE']], c.answer_style),
+        select('pz-lang', 'LANGUAGE', 'language', [['auto', 'MATCH WHAT I WRITE'], ['english', 'ENGLISH'], ['hinglish', 'HINGLISH']], c.language),
+        sw('pz-cite', 'ALWAYS CITE PAGE NUMBERS', 'cite_pages', c.cite_pages),
+        select('pz-strict', 'CITATION CHECKING', 'verifier_strict', [['normal', 'NORMAL'], ['strict', 'STRICT (FLAGS MORE CLAIMS)']], c.verifier_strict),
+        sw('pz-review', 'ASK ME BEFORE SAVING WHAT I LEARN FROM CHATS', 'memory_review', c.memory_review),
+        el('div', { class: 'row-gap' }, save),
+        out,
+      );
+      save.addEventListener('click', async () => {
+        const body = { profile: profile.value };
+        for (const input of meBox.querySelectorAll('[data-key]')) body[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
+        try {
+          await api.savePersonalize(body);
+          out.replaceChildren(notice('Saved.'));
+        } catch (e) {
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+    } catch (e) {
+      meBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  loadMe();
   loadLearning();
   loadVoice();
   loadProactive();
