@@ -79,3 +79,19 @@ The model can be changed on the Settings page. The chat model is unloaded from O
 `backend/eval/run_eval.py` indexes a folder into a throwaway index, asks the questions in
 `eval/questions.jsonl` (including ones the files can't answer) and reports answer accuracy,
 retrieval hit rate, citation accuracy, verifier pass rate, latency and lowest free RAM.
+
+## The assistant (conversations, memory, tasks, actions, voice)
+
+Everything the assistant remembers lives in `assistant.db` (conversations, memories, tasks, events,
+action audit trail, feedback), separate from `index.db`: the index is disposable and rebuilt on a schema
+bump, this is migrated forward (`db/migrations/NNNN_*.sql`) and never dropped. Background threads in the
+backend: the reminder/briefing scheduler (every 30 s, relayed to Electron over `/events/stream` for desktop
+notifications) and the memory extractor (after a chat has been quiet for 5 minutes). Context capture and
+paste-back use ctypes in the backend (`context_win.py`); the clipboard stays in Electron. Actions on the
+PC are proposed only from the user's own words, validated in code, and run only after approval
+(`core/assistant/tools`). Voice runs locally: faster-whisper (speech to text) and Piper (text to speech).
+Ranking learns a little from use: files opened for similar searches may rise at most two places
+(`core/assistant/learning.py`, `open_prior_max_shift`, 0 turns it off).
+
+`eval/assistant_eval.py` checks the rules (router, dates, memory filter) without a model; `run_eval.py`
+also reports an answer-relevance heuristic.

@@ -2,7 +2,7 @@
 import httpx
 
 from app.config import settings
-from app.core import indexer, memory
+from app.core import indexer, ram
 from app.core.llm import idle
 from app.core.search import vector_search
 from app.db import sqlite_fts
@@ -10,7 +10,7 @@ from app.db import sqlite_fts
 
 def test_low_memory_indexes_keywords_only_and_retries_later(corpus, db_paths, monkeypatch):
     db, vdb = db_paths
-    monkeypatch.setattr(memory, "is_low", lambda: True)
+    monkeypatch.setattr(ram, "is_low", lambda: True)
     counts = indexer.index_folder(corpus, db, vdb)
     assert counts["indexed"] == 2
     assert counts["keyword_only"] == 2 and not counts["semantic"]  # the scan says what it skipped
@@ -23,7 +23,7 @@ def test_low_memory_indexes_keywords_only_and_retries_later(corpus, db_paths, mo
     assert hashes == {""}  # blank = vectors still owed; next scan retries
     assert any("low memory" in e["error"] for e in indexer.RECENT_ERRORS)
 
-    monkeypatch.setattr(memory, "is_low", lambda: False)
+    monkeypatch.setattr(ram, "is_low", lambda: False)
     again = indexer.index_folder(corpus, db, vdb)
     assert again["indexed"] == 2 and again["skipped"] == 0
     assert again["keyword_only"] == 0 and again["semantic"]
@@ -76,5 +76,5 @@ def test_openai_compatible_embeddings(monkeypatch):
 
 
 def test_memory_status_shape():
-    s = memory.status()
+    s = ram.status()
     assert set(s) == {"free_mb", "total_mb", "low"}

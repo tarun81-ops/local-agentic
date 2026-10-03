@@ -30,7 +30,7 @@ export function render(container) {
 
   let seq = 0;
   let timer = null;
-  const open = (row) => api.open(row.path).catch((e) => results.prepend(notice(e.message, 'error')));
+  const open = (row) => api.open(row.path, input.value.trim()).catch((e) => results.prepend(notice(e.message, 'error')));
 
   async function run() {
     const q = input.value.trim();

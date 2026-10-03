@@ -12,11 +12,13 @@ os.environ.update(
     {
         "DATA_DIR": str(_DATA),
         "DB_PATH": str(_DATA / "index.db"),
+        "ASSISTANT_DB_PATH": str(_DATA / "assistant.db"),
         "VECTOR_DB_DIR": str(_DATA / "lancedb"),
         "API_TOKEN": "test-token",
         "WATCH_FOLDERS": "",
         "AUTO_RESCAN": "false",
         "MIN_FREE_RAM_MB": "0",
+        "RERANK_MODEL": "",  # tests that need one stand it in
     }
 )
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

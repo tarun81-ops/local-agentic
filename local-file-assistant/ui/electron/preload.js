@@ -11,5 +11,14 @@ contextBridge.exposeInMainWorld('lfa', {
   openMain: (page) => ipcRenderer.send('main:open', page),
   hideOverlay: () => ipcRenderer.send('overlay:hide'),
   onNavigate: (cb) => ipcRenderer.on('navigate', (_e, page) => cb(page)),
-  onOverlayShown: (cb) => ipcRenderer.on('overlay:shown', () => cb()),
+  // cb gets what was in front when summoned: {app, title, selection}, or null
+  onOverlayShown: (cb) => ipcRenderer.on('overlay:shown', (_e, context) => cb(context)),
+  // ATTACH mode: tell main which files may be dragged out, then start a native drag of one
+  allowDrag: (paths, replace = true) => ipcRenderer.send('overlay:drag-allow', { paths, replace }),
+  startDrag: (file) => ipcRenderer.send('overlay:start-drag', file),
+  pinOverlay: (pinned) => ipcRenderer.send('overlay:pin', Boolean(pinned)),
+  insertText: (text) => ipcRenderer.invoke('overlay:insert', text),
+  setShortcut: (accelerator, which = 'toggle') => ipcRenderer.invoke('shortcuts:set', { which, accelerator }),
+  shortcuts: () => ipcRenderer.invoke('app:shortcuts'),
+  onVoiceToggle: (cb) => ipcRenderer.on('overlay:voice-toggle', () => cb()),
 });

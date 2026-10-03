@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { badge, el, fmtBytes, fmtDate, notice, svg, ICONS } from '../components/common.js';
+import { mountDashboard } from '../components/dashboard.js';
 
 const STATES = {
   up_to_date: ['UP TO DATE', 'blue'],
@@ -15,11 +16,13 @@ function sectionHead(n, title, ...extra) {
 
 export function render(container) {
   const add = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '+ ADD FOLDER');
+  const overview = el('div');
   const folders = el('div', { class: 'box' });
   const problems = el('div');
   const history = el('div');
   const flash = el('div');
   let timer = null;
+  let updateOverview = null;
 
   container.replaceChildren(
     el('header', { class: 'page-head' }, el('h1', { class: 'page-title' }, 'INDEX')),
@@ -27,6 +30,7 @@ export function render(container) {
       'div',
       { class: 'page-body sections' },
       flash,
+      el('section', {}, sectionHead('00', 'OVERVIEW'), overview),
       el('section', {}, sectionHead('01', 'INDEXED FOLDERS', add), folders),
       el('section', {}, sectionHead('02', 'PROBLEMS'), problems),
       el('section', {}, sectionHead('03', 'HISTORY'), history),
@@ -77,7 +81,16 @@ export function render(container) {
   async function refresh() {
     clearTimeout(timer);
     try {
-      const [{ roots }, status, { batches }] = await Promise.all([api.roots(), api.indexStatus(), api.history()]);
+      const needFiles = !updateOverview; // file-type chart: fetched once, not on every 1s scan poll
+      const [{ roots }, status, { batches }, filesResult] = await Promise.all([
+        api.roots(),
+        api.indexStatus(),
+        api.history(),
+        needFiles ? api.files() : Promise.resolve(null),
+      ]);
+      const overviewData = { roots, batches, files: filesResult?.files };
+      if (!updateOverview) updateOverview = mountDashboard(overview, overviewData);
+      else updateOverview(overviewData);
       folders.replaceChildren(
         ...(roots.length
           ? roots.map(folderRow)

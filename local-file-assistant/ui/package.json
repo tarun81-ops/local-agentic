@@ -15,14 +15,34 @@
   "build": {
     "appId": "com.localfileassistant.app",
     "productName": "Local File Assistant",
-    "files": ["electron/**/*", "dist/**/*", "package.json"],
-    "extraResources": [{ "from": "../backend/dist/lfa-backend", "to": "backend" }],
-    "directories": { "output": "release" },
-    "win": { "target": "nsis" }
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/lfa-backend",
+        "to": "backend"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    }
   },
   "dependencies": {
     "@fontsource/archivo": "^5.3.0",
-    "@fontsource/space-mono": "^5.3.0"
+    "@fontsource/space-mono": "^5.3.0",
+    "chart.js": "^4.5.1"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

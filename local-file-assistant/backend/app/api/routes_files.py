@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.core import indexer
+from app.core.assistant import learning
 from app.core.watcher import watcher
 from app.db import sqlite_fts
 
@@ -22,6 +23,7 @@ class FolderRequest(BaseModel):
 
 class PathRequest(BaseModel):
     path: str
+    query: str = ""  # the search that led to opening it (optional; feeds search ranking)
 
 
 def _conn():
@@ -188,4 +190,8 @@ def open_file(req: PathRequest):
         os.startfile(path)  # noqa: S606 - path is an indexed document, not user-typed
     else:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+    try:
+        learning.record_open(str(path), req.query)
+    except Exception:
+        pass  # learning must never stop a file from opening
     return {"opened": str(path)}

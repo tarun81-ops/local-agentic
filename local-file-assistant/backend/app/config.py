@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -6,6 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # %APPDATA%\LocalFileAssistant, e.g. C:\Users\<user>\AppData\Roaming\LocalFileAssistant.
 # Override any of data_dir/db_path/vector_db_dir individually via env vars or .env.
 _DEFAULT_DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LocalFileAssistant"
+# The installed app ships its re-ranker next to the frozen backend (scripts\build-backend.ps1).
+_BUNDLED_MODELS = Path(sys.executable).parent / "models"
+_FROZEN = getattr(sys, "frozen", False)
 
 
 class Settings(BaseSettings):
@@ -39,6 +43,29 @@ class Settings(BaseSettings):
     data_dir: Path = _DEFAULT_DATA_DIR
     db_path: Path = _DEFAULT_DATA_DIR / "index.db"
     vector_db_dir: Path = _DEFAULT_DATA_DIR / "lancedb"
+    # Conversations, memories, tasks. Never dropped automatically (unlike index.db).
+    assistant_db_path: Path = _DEFAULT_DATA_DIR / "assistant.db"
+
+    # Assistant: chat turns and tokens of history sent to the model, recalled memories per
+    # reply, and seconds of chat silence before facts are extracted.
+    history_turns: int = 6
+    history_token_budget: int = 3000
+    memory_top_k: int = 5
+    extract_idle_s: int = 300
+
+    # Cross-encoder that re-reads the top search results together with the question
+    # (core/search/reranker.py). A Hugging Face repo id, fetched once into models_dir; "" = off.
+    # models_dir is separate from data_dir so a throwaway index (tests, eval) reuses the models.
+    rerank_model: str = ""
+    models_dir: Path = _BUNDLED_MODELS if _FROZEN and _BUNDLED_MODELS.is_dir() else _DEFAULT_DATA_DIR / "models"
+
+    # Speech models (core/assistant/voice) are downloaded by the user, so they live in the data dir,
+    # which is writable even when models_dir is the installer's read-only bundle.
+    voice_models_dir: Path = _DEFAULT_DATA_DIR / "models"
+
+    # Search ranking learns from the files you open: a habitually opened file may move up at most
+    # this many places for a similar search (0 = off). See core/assistant/learning.py.
+    open_prior_max_shift: int = 2
 
     # Describe images with the vision model while indexing (slow on CPU; OCR works without it).
     caption_images: bool = False

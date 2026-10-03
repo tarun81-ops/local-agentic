@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from app.core import memory
+from app.core import ram
 from app.core.parsers import PARSERS
 from app.core.search.vector_search import embed
 from app.db import sqlite_fts, vector_store
@@ -91,11 +91,11 @@ def _index_one(path: Path, root: Path, run: _Run) -> str:
     chunks = list(enumerate(PARSERS[path.suffix.lower()](path)))
 
     vectors = None
-    if chunks and run.embed_ok and memory.is_low():
+    if chunks and run.embed_ok and ram.is_low():
         # Keyword-indexed now; the blank hash below makes the next scan add the vectors.
         if not run.low_memory_noted:
             run.low_memory_noted = True
-            free = memory.status()["free_mb"]
+            free = ram.status()["free_mb"]
             _record_error(path, RuntimeError(f"low memory ({free} MB free): keyword index only for now, vectors added on the next scan"))
     elif chunks and run.embed_ok:
         try:

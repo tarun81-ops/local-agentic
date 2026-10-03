@@ -6,37 +6,123 @@ import '@fontsource/space-mono/400.css';
 import '@fontsource/space-mono/700.css';
 import './style.css';
 
-import { api, chat, waitForBackend } from './api.js';
-import { answerNote, answerText, matchedFiles, sourceCards } from './components/answer.js';
-import { el, notice } from './components/common.js';
+import { api, waitForBackend } from './api.js';
+import { ask } from './components/chat-log.js';
+import { micButton, readAloud, speak } from './components/mic.js';
+import { badge, el, fmtBytes, notice, swatch } from './components/common.js';
 import { resultRow } from './pages/search.js';
 
-const scrim = document.getElementById('scrim');
-const panel = document.getElementById('panel');
 const input = document.getElementById('query');
 const body = document.getElementById('overlay-body');
 const footer = document.getElementById('overlay-footer');
 const status = document.getElementById('overlay-status');
+const tabHint = document.getElementById('tab-hint');
+const pin = document.getElementById('pin');
+const chipBox = document.getElementById('context-chip');
 const tabs = [...document.querySelectorAll('.tab')];
 
 let mode = 'search';
 let seq = 0;
 let timer = null; // pending as-you-type search
 let aborter = null;
+let convId = null; // the overlay's Ask conversation, kept so follow-ups have context
+let context = null; // {app, title, selection} from the window in front when summoned; sent with questions
+let canInsert = false; // an answer can be pasted back (something was captured)
+
+const MODES = ['search', 'ask', 'attach'];
+const PLACEHOLDER = {
+  search: 'Search your files, or press Tab to ask…',
+  ask: 'Ask a question about your files…',
+  attach: 'What does the form ask for? e.g. resume, ID proof…',
+};
 
 function setMode(next) {
   mode = next;
   tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
-  input.placeholder = mode === 'ask' ? 'Ask a question about your files…' : 'Search your files, or press Tab to ask…';
+  input.placeholder = PLACEHOLDER[mode];
+  tabHint.textContent = `TAB → ${MODES[(MODES.indexOf(mode) + 1) % MODES.length].toUpperCase()}`;
+  footer.firstElementChild.textContent = mode === 'attach' ? '↑↓ NAVIGATE   ↵ COPY PATH   DRAG A FILE INTO THE PAGE' : '↑↓ NAVIGATE   ↵ OPEN   TAB ASK AI';
 }
 
-function reset() {
+// ATTACH: find the document a form field wants, then drag it from here into the page's upload box.
+function attachRow(r) {
+  const row = el('div', { class: 'result-row attach-row', draggable: r.sensitive ? null : 'true' });
+  const sub = [fmtBytes(r.size), new Date(r.mtime * 1000).toLocaleDateString()].join(' · ');
+  const tag = r.sensitive ? badge('ASKS EVERY TIME', 'red-outline') : '';
+  const confirmBtn = r.sensitive
+    ? el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: (e) => {
+        e.stopPropagation();
+        window.lfa.allowDrag([r.path], false);
+        row.draggable = true;
+        confirmBtn.remove();
+        tag.textContent = 'CONFIRMED';
+      } }, 'ATTACH ANYWAY')
+    : '';
+  row.append(
+    swatch(r.path),
+    el('div', { class: 'result-body' },
+      el('div', { class: 'result-line' }, el('span', { class: 'result-name' }, r.name), tag),
+      el('div', { class: 'result-path' }, r.path),
+      el('div', { class: 'result-snippet' }, r.snippet || sub)),
+    confirmBtn,
+  );
+  row.addEventListener('dragstart', (e) => {
+    e.preventDefault(); // Electron starts the real, native drag
+    window.lfa.startDrag(r.path);
+  });
+  row.addEventListener('click', () => navigator.clipboard.writeText(r.path).then(() => (status.textContent = 'PATH COPIED'), () => {}));
+  return row;
+}
+
+async function runAttach() {
+  timer = null;
+  const q = input.value.trim();
+  const mine = ++seq;
+  if (!q) {
+    window.lfa.allowDrag([]);
+    body.replaceChildren();
+    footer.hidden = true;
+    return;
+  }
+  try {
+    const { results } = await api.formsSuggest({ label: q, pageTitle: context?.title });
+    if (mine !== seq || mode !== 'attach') return;
+    window.lfa.allowDrag(results.filter((r) => !r.sensitive).map((r) => r.path));
+    status.textContent = `${results.length} FILES`;
+    body.replaceChildren(...(results.length ? results.map(attachRow) : [notice('No matching files. Try other words, like the type of document.')]));
+    markOptions();
+    footer.hidden = false;
+  } catch (e) {
+    if (mine === seq) body.replaceChildren(notice(e.message, 'error'));
+  }
+}
+
+function appName(exe) {
+  return (exe || '').replace(/\.exe$/i, '').replace(/^./, (c) => c.toUpperCase());
+}
+
+function renderChip() {
+  chipBox.hidden = !context;
+  if (!context) return chipBox.replaceChildren();
+  const from = [appName(context.app), context.title].filter(Boolean).join(' — ');
+  chipBox.replaceChildren(
+    el('div', { class: 'context-from' }, 'FROM: ', from),
+    context.selection ? el('div', { class: 'context-sel' }, context.selection.slice(0, 200)) : '',
+    el('button', { type: 'button', class: 'context-x', 'aria-label': 'Don’t use this context', onclick: () => { context = null; renderChip(); input.focus(); } }, '✕'),
+  );
+}
+
+function reset(ctx) {
   aborter?.abort();
+  convId = null;
+  context = ctx?.app ? ctx : null;
+  canInsert = Boolean(context);
+  renderChip();
   input.value = '';
   body.replaceChildren();
   markOptions();
   footer.hidden = true;
-  setMode('search');
+  setMode(context?.selection ? 'ask' : 'search'); // text selected: the likely question is "about this"
   input.focus();
 }
 
@@ -55,7 +141,7 @@ async function runSearch() {
     status.textContent = `${data.results.length} RESULTS · ${(data.ms / 1000).toFixed(2)}S`;
     body.replaceChildren(
       ...(data.results.length
-        ? data.results.map((r) => resultRow(r, data.terms, (row) => api.open(row.path).then(() => window.lfa.hideOverlay()).catch(() => {})))
+        ? data.results.map((r) => resultRow(r, data.terms, (row) => api.open(row.path, input.value.trim()).then(() => window.lfa.hideOverlay()).catch(() => {})))
         : [notice('No matches in your indexed files.')]),
     );
     markOptions();
@@ -65,37 +151,33 @@ async function runSearch() {
   }
 }
 
+function addActions(turn) {
+  if (!turn.answer || turn.error || turn.noResults) return;
+  const note = el('span', { class: 'action-status', role: 'status' });
+  const copy = el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => navigator.clipboard.writeText(turn.answer).then(() => (note.textContent = 'COPIED'), () => (note.textContent = 'COPY FAILED')) }, 'COPY');
+  const insert = canInsert
+    ? el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: async () => {
+        if (!(await window.lfa.insertText(turn.answer))) note.textContent = 'COULDN’T INSERT — COPIED TO CLIPBOARD';
+      } }, 'INSERT')
+    : '';
+  turn.box.append(el('div', { class: 'answer-actions' }, insert, copy, note));
+}
+
 async function runAsk() {
-  const q = input.value.trim();
-  if (!q) return;
+  const message = input.value.trim();
+  if (!message) return;
   aborter?.abort();
   aborter = new AbortController();
   input.value = '';
   input.placeholder = 'Ask a follow-up…';
   footer.hidden = true;
   status.textContent = 'LOCAL — ANSWERING';
-  const live = el('div', { class: 'answer-text streaming' });
-  const progress = el('div', { class: 'matched' }, 'Searching your files…');
-  const answerBox = el('div', { class: 'assistant' }, progress, live);
-  body.replaceChildren(el('div', { class: 'bubble-user' }, q), answerBox);
+  body.replaceChildren();
   markOptions();
-  let text = '';
-  await chat(
-    { question: q },
-    {
-      results: (d) => progress.replaceWith(matchedFiles(d.results) || progress),
-      token: (d) => {
-        text += d.delta;
-        live.textContent = text;
-      },
-      done: (d) => {
-        if (d.no_results) answerBox.replaceChildren(notice('Nothing in your indexed files matches that.'));
-        else answerBox.replaceChildren(answerText(d.answer, d.citations, d.uncited), answerNote(d) || '', el('div', { class: 'sources-h' }, 'SOURCES'), sourceCards(d.citations) || '');
-      },
-      error: (d) => answerBox.replaceChildren(notice(d.detail, 'error')),
-    },
-    aborter.signal,
-  );
+  const turn = await ask({ log: body, message, conversationId: convId, mode: 'auto', context, signal: aborter.signal, opts: { sourcesHeading: true } });
+  if (turn.conversation) convId = turn.conversation.id;
+  addActions(turn);
+  if (readAloud.get() && turn.answer && !turn.error && !turn.noResults) speak(turn.answer).catch(() => {});
   status.textContent = 'LOCAL — READY';
 }
 
@@ -132,9 +214,9 @@ function moveSelection(step) {
 }
 
 input.addEventListener('input', () => {
-  if (mode !== 'search') return;
+  if (mode === 'ask') return;
   clearTimeout(timer);
-  timer = setTimeout(runSearch, 200);
+  timer = setTimeout(mode === 'attach' ? runAttach : runSearch, 200);
 });
 
 input.addEventListener('keydown', (e) => {
@@ -145,13 +227,14 @@ input.addEventListener('keydown', (e) => {
     e.preventDefault();
     clearTimeout(timer);
     timer = null;
-    setMode(mode === 'search' ? 'ask' : 'search');
-    if (mode === 'ask' && input.value.trim()) runAsk();
-    else if (mode === 'search') runSearch();
-  } else if (e.key === 'ArrowDown' && mode === 'search') {
+    setMode(MODES[(MODES.indexOf(mode) + 1) % MODES.length]);
+    body.replaceChildren();
+    footer.hidden = true;
+    if (input.value.trim()) ({ search: runSearch, ask: runAsk, attach: runAttach })[mode]();
+  } else if (e.key === 'ArrowDown' && mode !== 'ask') {
     e.preventDefault();
     moveSelection(1);
-  } else if (e.key === 'ArrowUp' && mode === 'search') {
+  } else if (e.key === 'ArrowUp' && mode !== 'ask') {
     e.preventDefault();
     moveSelection(-1);
   } else if (e.key === 'Enter') {
@@ -160,10 +243,10 @@ input.addEventListener('keydown', (e) => {
       return;
     }
     const selected = body.querySelector('.result-row.selected');
-    if (selected && timer === null) selected.click(); // results are current: open the file
+    if (selected && timer === null) selected.click(); // results are current: open the file (ATTACH: copy its path)
     else {
       clearTimeout(timer);
-      runSearch();
+      (mode === 'attach' ? runAttach : runSearch)();
     }
   }
 });
@@ -181,9 +264,25 @@ tabs.forEach((t) =>
   }),
 );
 
-// Clicking the dimmed backdrop (not the panel) closes the overlay.
-scrim.addEventListener('mousedown', (e) => {
-  if (!panel.contains(e.target)) window.lfa.hideOverlay();
+// Voice: the mic button, or the voice shortcut (which opens the panel and starts listening).
+const mic = micButton({
+  onText: (text) => {
+    setMode('ask');
+    input.value = text;
+    runAsk();
+  },
+  onError: (message) => body.replaceChildren(notice(message, 'error')),
+});
+pin.before(mic.button);
+window.lfa.onVoiceToggle(() => {
+  setMode('ask');
+  mic.toggle();
+});
+
+pin.addEventListener('click', () => {
+  const on = pin.getAttribute('aria-pressed') !== 'true';
+  pin.setAttribute('aria-pressed', String(on));
+  window.lfa.pinOverlay(on);
 });
 
 window.lfa.onOverlayShown(reset);

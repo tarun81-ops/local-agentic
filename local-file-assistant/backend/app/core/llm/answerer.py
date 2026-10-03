@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.core.assistant import prompts
 from app.core.llm import idle
 from app.core.llm.client import current_model, get_client
 
@@ -20,18 +21,17 @@ def label(chunk: dict) -> str:
     return f"{Path(chunk['path']).name}, {chunk['loc_kind']} {chunk['loc_no']}"
 
 
-def _messages(question: str, chunks: list[dict]) -> list[dict]:
+def _messages(question: str, chunks: list[dict], history: list[dict] | None = None) -> list[dict]:
     context = "\n\n".join(f"[{label(c)}]\n{c['text']}" for c in chunks)
-    return [{"role": "user", "content": PROMPT.format(context=context, question=question)}]
+    return [*(history or []), {"role": "user", "content": PROMPT.format(context=context, question=question)}]
 
 
-def answer_stream(question: str, chunks: list[dict], model: str | None = None):
-    """Yields text deltas as they're generated, so the UI can show the answer forming.
-    Returns (as the generator's return value) True if the answer hit MAX_ANSWER_TOKENS."""
+def _stream(messages: list[dict], model: str | None):
+    """Yields text deltas; returns (as the generator's return value) True if cut off at the token cap."""
     idle.touch()
     stream = get_client().chat.completions.create(
         model=model or current_model(),
-        messages=_messages(question, chunks),
+        messages=messages,
         max_tokens=MAX_ANSWER_TOKENS,
         stream=True,
     )
@@ -44,3 +44,29 @@ def answer_stream(question: str, chunks: list[dict], model: str | None = None):
         truncated = truncated or chunk.choices[0].finish_reason == "length"
     idle.touch()
     return truncated
+
+
+def answer_stream(question: str, chunks: list[dict], history: list[dict] | None = None, model: str | None = None):
+    """File mode: answers from the excerpts only. Same delta/return convention as _stream."""
+    return (yield from _stream(_messages(question, chunks, history), model))
+
+
+def chat_stream(message: str, history: list[dict] | None = None, model: str | None = None):
+    """General chat: no excerpts, no citations."""
+    return (yield from _stream([{"role": "system", "content": prompts.CHAT_SYSTEM}, *(history or []), {"role": "user", "content": message}], model))
+
+
+def rewrite_query(message: str, history: list[dict], model: str | None = None) -> str:
+    """Turns a follow-up into a standalone search query. Falls back to the last question + message."""
+    last_q = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+    try:
+        idle.touch()
+        text = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in history[-4:])
+        r = get_client().chat.completions.create(
+            model=model or current_model(),
+            messages=[{"role": "user", "content": prompts.REWRITE.format(history=text, message=message)}],
+            max_tokens=40,
+        )
+        return (r.choices[0].message.content or "").strip().strip('"') or f"{last_q} {message}".strip()
+    except Exception:
+        return f"{last_q} {message}".strip()
