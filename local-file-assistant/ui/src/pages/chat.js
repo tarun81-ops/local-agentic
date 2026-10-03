@@ -85,6 +85,13 @@ export function render(container, { chatId, onChatsChanged }) {
         el('div', { class: 'empty-b' }, 'Answers from your files cite the exact file and page. Try “What is the invoice total for Acme Corp?”'),
       ),
     );
+    api.recentFiles().then(({ files }) => {
+      if (!files.length || turns) return;
+      log.querySelector('.empty')?.append(
+        el('div', { class: 'recent-h' }, 'RECENT AND RELEVANT'),
+        el('div', { class: 'recent-files' }, files.map((f) => el('button', { type: 'button', class: 'btn btn-outline btn-sm', title: f.path, onclick: () => api.open(f.path).catch((e) => log.append(notice(e.message, 'error'))) }, `${f.name} · ${f.reason === 'opened' ? 'OPENED' : 'CHANGED'}`))),
+      );
+    }, () => {});
   }
 
   async function submit() {

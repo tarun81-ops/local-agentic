@@ -188,6 +188,30 @@ def status():
     return {**_snapshot(), "errors": list(indexer.RECENT_ERRORS)}
 
 
+RECENT_LIMIT, CHANGED_DAYS = 8, 7
+
+
+@router.get("/recent")
+def recent():
+    """Files worth surfacing on the Chat home: the ones you opened last, then ones changed in the
+    past week. Only files still in the index; opening goes through /files/open, so the
+    open-history learning keeps working."""
+    conn = _conn()
+    try:
+        rows, seen = [], set()
+        for o in learning.recent_opens(RECENT_LIMIT * 3):
+            if o["path"] not in seen and sqlite_fts.is_indexed(conn, o["path"]):
+                seen.add(o["path"])
+                rows.append({"path": o["path"], "name": Path(o["path"]).name, "reason": "opened", "at": o["at"]})
+        for f in sqlite_fts.recent_files(conn, time.time() - CHANGED_DAYS * 86400, RECENT_LIMIT * 3):
+            if f["path"] not in seen:
+                seen.add(f["path"])
+                rows.append({"path": f["path"], "name": Path(f["path"]).name, "reason": "changed", "at": f["mtime"]})
+        return {"files": rows[:RECENT_LIMIT]}
+    finally:
+        conn.close()
+
+
 @router.get("")
 def list_files(root: str | None = None):
     conn = _conn()

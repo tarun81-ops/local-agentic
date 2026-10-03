@@ -385,3 +385,5 @@ body.overlay { background: var(--paper); overflow: hidden; }
 
 .folder-label { font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
 .folder-settings { border-top: 1px solid var(--ink-faint); background: var(--paper-alt); }
+
+.recent-files { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }

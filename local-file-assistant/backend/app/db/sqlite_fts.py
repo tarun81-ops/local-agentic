@@ -184,6 +184,12 @@ def list_files(conn: sqlite3.Connection, root: str | None = None, limit: int = 5
     return [dict(r) for r in conn.execute(sql, (*args, limit))]
 
 
+def recent_files(conn: sqlite3.Connection, since: float, limit: int = 20) -> list[dict]:
+    """Indexed files modified since `since` (epoch seconds), newest first."""
+    rows = conn.execute("SELECT path, mtime FROM files WHERE mtime >= ? ORDER BY mtime DESC LIMIT ?", (since, limit))
+    return [dict(r) for r in rows]
+
+
 # ---- roots ------------------------------------------------------------------------
 
 def add_root(conn: sqlite3.Connection, root: Path) -> None:

@@ -21,7 +21,7 @@ export const NAV_ITEMS = [
  */
 const ROW_HEIGHT = 40;
 
-export function renderSidebar(root, { active, onSelect, onNewChat, recent, onOpenChat, status }) {
+export function renderSidebar(root, { active, onSelect, onNewChat, recent, onOpenChat, status, collections = [], onOpenCollection }) {
   const activeIndex = Math.max(0, NAV_ITEMS.findIndex((item) => item.id === active));
   root.replaceChildren(
     el('div', { class: 'brand' }, el('div', { class: 'mark' }, el('div')), el('div', { class: 'brand-name' }, 'LOCAL FILE ASSISTANT')),
@@ -44,6 +44,14 @@ export function renderSidebar(root, { active, onSelect, onNewChat, recent, onOpe
         ),
       ),
     ),
+    collections.length
+      ? el(
+          'div',
+          { class: 'recent' },
+          el('div', { class: 'recent-h' }, 'COLLECTIONS'),
+          collections.slice(0, 8).map((c) => el('button', { type: 'button', class: 'recent-item', title: c.query, onclick: () => onOpenCollection?.(c) }, c.name)),
+        )
+      : '',
     active === 'chat' && recent.length
       ? el(
           'div',

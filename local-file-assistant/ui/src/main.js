@@ -21,7 +21,7 @@ const PAGES = { chat: renderChat, search: renderSearch, organize: renderOrganize
 
 const sidebar = document.getElementById('sidebar');
 const content = document.getElementById('content');
-const state = { page: 'chat', chatId: null, recent: [], status: { connected: false, model: '' }, cleanup: null, ready: false };
+const state = { page: 'chat', chatId: null, prefill: null, collections: [], recent: [], status: { connected: false, model: '' }, cleanup: null, ready: false };
 
 function drawSidebar() {
   renderSidebar(sidebar, {
@@ -31,7 +31,16 @@ function drawSidebar() {
     recent: state.recent,
     onOpenChat: (id) => show('chat', { chatId: id }),
     status: state.status,
+    collections: state.collections,
+    onOpenCollection: (c) => show('search', { prefill: { collectionId: c.id } }),
   });
+}
+
+async function refreshCollections() {
+  try {
+    state.collections = (await api.collections()).collections.filter((c) => c.pinned);
+  } catch { /* keep the list we have */ }
+  drawSidebar();
 }
 
 async function refreshRecent() {
@@ -60,16 +69,19 @@ async function refreshStatus() {
   drawSidebar();
 }
 
-function show(page, { chatId } = {}) {
+function show(page, { chatId, prefill } = {}) {
   state.page = PAGES[page] ? page : 'chat';
   if (!state.ready) return; // boot() shows the requested page once the backend is up
   state.cleanup?.();
   if (state.page === 'chat') state.chatId = chatId ?? null;
+  state.prefill = prefill ?? null;
   drawSidebar();
   content.dataset.page = state.page;
   state.cleanup =
     PAGES[state.page](content, {
       chatId: state.chatId,
+      prefill: state.prefill,
+      onCollectionsChanged: refreshCollections,
       navigate: show,
       onChatsChanged: refreshRecent,
       onStatusChanged: refreshStatus,
@@ -88,6 +100,7 @@ async function boot() {
   state.ready = true;
   show(state.page);
   refreshRecent();
+  refreshCollections();
   refreshStatus();
   setInterval(refreshStatus, 30000);
 }

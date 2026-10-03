@@ -46,6 +46,17 @@ def open_prior(query: str, paths) -> dict[str, float]:
     return {p: min(float(cap), 0.5 * w) for p, w in weight.items()}
 
 
+def recent_opens(limit: int = 8) -> list[dict]:
+    """The files opened most recently, one row per file, newest first. Derived from file_opens,
+    so wipe() clears it along with the rest of what is learned from use."""
+    conn = assistant_db.connect()
+    try:
+        rows = conn.execute("SELECT path, MAX(opened_at) AS at FROM file_opens GROUP BY path ORDER BY at DESC LIMIT ?", (limit,)).fetchall()
+        return [{"path": r["path"], "at": r["at"]} for r in rows]
+    finally:
+        conn.close()
+
+
 def set_feedback(msg_id: int, rating: int) -> None:
     """1 helpful, -1 not helpful, 0 takes the mark back. Only assistant answers can be rated."""
     if rating not in (-1, 0, 1):
