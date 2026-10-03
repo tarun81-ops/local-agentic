@@ -1,6 +1,7 @@
 // Renders a cited answer (numbered red badges in the text) and its source cards. Used by the
 // Ask page and the overlay's Ask tab.
 import { api } from '../api.js';
+import { openStudy } from './study.js';
 import { badge, el, fileName, locWords, notice, svg, ICONS, swatch } from './common.js';
 
 // "checked": the claim's facts are in the cited text. "unchecked": nothing specific to check.
@@ -80,6 +81,7 @@ export function sourceCards(citations) {
           'div',
           { class: 'source-foot' },
           el('div', { class: 'source-path' }, `${c.path || c.file} · ${locWords(c.loc_kind, c.loc_no)}`),
+          c.path ? el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Study ${fileName(c.file)}`, onclick: () => openStudy(c.path, fileName(c.file)) }, 'STUDY') : null,
           c.path ? el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => api.open(c.path).catch(() => {}) }, 'OPEN') : null,
         ),
       ),

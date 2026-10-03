@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
     root: str | None = None
     model: str | None = None
     style: str | None = None  # one-question override of the saved answer style
+    language: str | None = None  # same, for the reply language
     context: dict | None = None  # {app, title, selection} captured from the window in front
 
 
@@ -146,7 +147,7 @@ def _stream(req: ChatRequest, conv: dict | None):
     answer = ""
     truncated = False
     pz = personalize.get_all()
-    style = prompts.style_instruction(req.style if req.style in personalize.STYLES else pz["answer_style"], pz["language"], pz["cite_pages"])
+    style = prompts.style_instruction(req.style if req.style in personalize.STYLES else pz["answer_style"], req.language if req.language in personalize.LANGUAGES else pz["language"], pz["cite_pages"])
     # Order: screen context, profile, memory, then the message. The search used the bare message.
     prompt = prompts.with_memory(prompts.with_profile(prompts.with_context(req.message, req.context), pz["profile"]), remembered)
     deltas = answer_stream(prompt, chunks, history, model=req.model, style=style) if kind == "files" else chat_stream(prompt, history, model=req.model, style=style)

@@ -369,3 +369,16 @@ body.overlay { background: var(--paper); overflow: hidden; }
 .feedback-btn { border: 0; background: none; padding: 0; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.05em; color: var(--ink-faint); cursor: pointer; }
 .feedback-btn:hover { color: var(--ink); }
 .feedback-btn[aria-pressed='true'] { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
+/* study cards */
+.result-wrap { position: relative; }
+.result-wrap > .result-row { width: 100%; }
+.result-study { position: absolute; top: 10px; right: 12px; }
+.study-dialog { border: 1.5px solid var(--ink); background: var(--paper); color: var(--ink); padding: 18px 22px; width: min(640px, 92vw); }
+.study-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.study-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.study-stage { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.study-card { border: 1.5px solid var(--ink); background: var(--paper-alt); padding: 22px; min-height: 120px; }
+.study-front { font-weight: 700; font-size: 17px; line-height: 1.4; }
+.study-back { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--ink-faint); font-size: 15px; line-height: 1.5; }
+.mini-select { border: 1.5px solid var(--ink); background: transparent; color: var(--ink); font-family: var(--mono); font-size: 11px; padding: 2px 4px; }

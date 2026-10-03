@@ -16,7 +16,7 @@ DUPLICATE_COSINE = 0.92
 MIN_COSINE = 0.35  # below this a semantic hit is noise
 EMBED_TIMEOUT = 5  # chat must not stall for long when the embedder is down
 _STOP = {"the", "and", "for", "what", "which", "who", "how", "you", "your", "are", "was", "were", "with", "that", "this", "have", "has", "does", "did", "can", "about", "from", "into", "when", "where", "why", "tell", "please"}
-_COLS = "id, text, kind, pinned, created_at, last_used_at, use_count, status"
+_COLS = "id, text, kind, pinned, created_at, last_used_at, use_count"
 
 
 def _embed(texts: list[str]) -> list[bytes | None]:
@@ -33,12 +33,11 @@ def _norm(blob: bytes) -> np.ndarray:
 
 
 def _row(r) -> dict:
-    return {**{k: r[k] for k in r.keys() if k in ("id", "text", "kind", "created_at", "last_used_at", "use_count", "status")}, "pinned": bool(r["pinned"])}
+    return {**{k: r[k] for k in r.keys() if k in ("id", "text", "kind", "created_at", "last_used_at", "use_count")}, "pinned": bool(r["pinned"])}
 
 
-def add(text: str, kind: str = "fact", source_conv: int | None = None, source_msg: int | None = None, pinned: bool = False, status: str = "active") -> dict | None:
-    """Stores a fact; returns None if the same fact is already remembered (active or waiting for review).
-    Facts learned from chats come in as "pending"; the user saying "remember ..." is "active"."""
+def add(text: str, kind: str = "fact", source_conv: int | None = None, source_msg: int | None = None, pinned: bool = False) -> dict | None:
+    """Stores a fact; returns None if the same fact is already remembered."""
     text = " ".join(text.split())
     if not text:
         return None
@@ -51,21 +50,19 @@ def add(text: str, kind: str = "fact", source_conv: int | None = None, source_ms
             if blob and r["embedding"] and r["embed_model"] == settings.embedding_model and float(_norm(blob) @ _norm(r["embedding"])) >= DUPLICATE_COSINE:
                 return None
         cur = conn.execute(
-            "INSERT INTO memories(text, kind, source_conv, source_msg, created_at, pinned, embedding, embed_model, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (text, kind, source_conv, source_msg, time.time(), int(pinned), blob, settings.embedding_model if blob else None, status),
+            "INSERT INTO memories(text, kind, source_conv, source_msg, created_at, pinned, embedding, embed_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (text, kind, source_conv, source_msg, time.time(), int(pinned), blob, settings.embedding_model if blob else None),
         )
         conn.commit()
-        return {"id": cur.lastrowid, "text": text, "kind": kind, "pinned": pinned, "status": status}
+        return {"id": cur.lastrowid, "text": text, "kind": kind, "pinned": pinned}
     finally:
         conn.close()
 
 
-def list_all(q: str = "", status: str | None = None) -> list[dict]:
-    """status="active" / "pending" filters; None returns both."""
+def list_all(q: str = "") -> list[dict]:
     conn = assistant_db.connect()
     try:
-        where, args = ("WHERE status = ?", (status,)) if status else ("", ())
-        rows = conn.execute(f"SELECT {_COLS} FROM memories {where} ORDER BY pinned DESC, created_at DESC", args).fetchall()
+        rows = conn.execute(f"SELECT {_COLS} FROM memories ORDER BY pinned DESC, created_at DESC").fetchall()
         out = [_row(r) for r in rows]
         return [m for m in out if q.lower() in m["text"].lower()] if q else out
     finally:
@@ -85,35 +82,6 @@ def update(mem_id: int, text: str | None = None, pinned: bool | None = None, kin
             conn.execute("UPDATE memories SET kind = ? WHERE id = ?", (kind, mem_id))
         conn.commit()
         return conn.execute("SELECT 1 FROM memories WHERE id = ?", (mem_id,)).fetchone() is not None
-    finally:
-        conn.close()
-
-
-def approve(mem_id: int) -> bool:
-    conn = assistant_db.connect()
-    try:
-        n = conn.execute("UPDATE memories SET status = 'active' WHERE id = ?", (mem_id,)).rowcount
-        conn.commit()
-        return n > 0
-    finally:
-        conn.close()
-
-
-def approve_all() -> int:
-    conn = assistant_db.connect()
-    try:
-        n = conn.execute("UPDATE memories SET status = 'active' WHERE status = 'pending'").rowcount
-        conn.commit()
-        return n
-    finally:
-        conn.close()
-
-
-def counts() -> dict:
-    conn = assistant_db.connect()
-    try:
-        got = dict(conn.execute("SELECT status, COUNT(*) FROM memories GROUP BY status").fetchall())
-        return {"active": got.get("active", 0), "pending": got.get("pending", 0)}
     finally:
         conn.close()
 
@@ -150,7 +118,7 @@ def _refresh_embeddings(conn) -> None:
 
 
 def recall(query: str, k: int | None = None, touch: bool = True) -> list[dict]:
-    """The k active facts most relevant to `query`, best first. Facts awaiting review are never used."""
+    """The k facts most relevant to `query`, best first."""
     k = settings.memory_top_k if k is None else k
     if k <= 0 or not query.strip():
         return []
@@ -161,13 +129,13 @@ def recall(query: str, k: int | None = None, touch: bool = True) -> list[dict]:
         terms = [t for t in re.findall(r"\w+", query.lower()) if len(t) > 2 and t not in _STOP]
         if terms:
             match = " OR ".join(f'"{t}"' for t in terms)
-            for rank, r in enumerate(conn.execute("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? AND rowid IN (SELECT id FROM memories WHERE status = 'active') ORDER BY rank LIMIT 20", (match,))):
+            for rank, r in enumerate(conn.execute("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT 20", (match,))):
                 scores[r[0]] = scores.get(r[0], 0) + 1 / (60 + rank + 1)
         [qblob] = _embed([query])
         if qblob:
             q = _norm(qblob)
             sims = []
-            for r in conn.execute("SELECT id, embedding FROM memories WHERE embedding IS NOT NULL AND embed_model = ? AND status = 'active'", (settings.embedding_model,)):
+            for r in conn.execute("SELECT id, embedding FROM memories WHERE embedding IS NOT NULL AND embed_model = ?", (settings.embedding_model,)):
                 s = float(q @ _norm(r["embedding"]))
                 if s >= MIN_COSINE:
                     sims.append((s, r["id"]))

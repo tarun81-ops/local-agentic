@@ -56,14 +56,14 @@ export async function waitForBackend({ timeoutMs = 120000, onWaiting } = {}) { /
 }
 
 /** POST /chat and dispatch its server-sent events: route, results, token, conversation, done, error. */
-export async function chat({ message, conversationId, mode, root, context }, handlers, signal) {
+export async function chat({ message, conversationId, mode, root, context, style, language }, handlers, signal) {
   const { token } = await config();
   let response;
   try {
     response = await fetch((await base()) + '/chat', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, conversation_id: conversationId ?? null, mode: mode || 'auto', root: root || null, context: context || null }),
+      body: JSON.stringify({ message, conversation_id: conversationId ?? null, mode: mode || 'auto', root: root || null, context: context || null, style: style || null, language: language || null }),
       signal,
     });
   } catch (err) {
@@ -168,6 +168,13 @@ export const api = {
   exportLearning: async () => {
     const { token } = await config();
     const r = await fetch((await base()) + '/learning/export', { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new ApiError(r.status, 'Export failed');
+    return r.text();
+  },
+  studyGenerate: (path, kind, count) => request('/study/generate', { method: 'POST', body: { path, kind, count } }),
+  studyCsv: async (items) => {
+    const { token } = await config();
+    const r = await fetch((await base()) + '/study/export', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) });
     if (!r.ok) throw new ApiError(r.status, 'Export failed');
     return r.text();
   },

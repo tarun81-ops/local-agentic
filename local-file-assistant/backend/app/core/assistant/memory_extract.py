@@ -6,7 +6,7 @@ import threading
 import time
 
 from app.config import settings
-from app.core import personalize, prefs, ram
+from app.core import prefs, ram
 from app.core.assistant import memory_store
 from app.core.llm import client
 from app.db import assistant_db
@@ -23,8 +23,7 @@ Messages:
 # Never stored automatically (only when the user says "remember ..." themselves).
 BLOCKED = re.compile(
     r"\d[\d \-]{8,}\d|password|passcode|\bpin\b|\botp\b|cvv|\bssn\b|aadhaar|aadhar|passport|credit card|debit card|bank account|\biban\b"
-    r"|salary|\bloan\b|diagnos|medication|prescription|disease|illness|medical|health|cancer|therapy|\bpan card\b"
-    r"|\bid number\b|national id|social security|diabet|depress|anxiety|blood (?:group|pressure|sugar)|\bincome\b|\bdebt\b",
+    r"|salary|\bloan\b|diagnos|medication|prescription|disease|illness|medical|health|cancer|therapy|\bpan card\b",
     re.I,
 )
 _QUESTION = re.compile(r"^(what|who|when|where|why|how|which|do|does|did|is|are|can|could|would|should)\b", re.I)
@@ -57,8 +56,7 @@ def _pending(idle_s: float, now: float) -> list[tuple[int, int]]:
 
 
 def extract_conversation(conv_id: int, after_id: int) -> int:
-    """Looks at the user's new messages; returns how many facts were saved (as pending while the
-    user reviews what is learned, which is the default)."""
+    """Looks at the user's new messages; returns how many facts were saved."""
     conn = assistant_db.connect()
     try:
         rows = conn.execute("SELECT id, content FROM messages WHERE conv_id = ? AND id > ? AND role = 'user' ORDER BY id", (conv_id, after_id)).fetchall()
@@ -68,9 +66,8 @@ def extract_conversation(conv_id: int, after_id: int) -> int:
     saved = 0
     if rows:
         text = "\n".join(f"- {r['content'][:500]}" for r in rows[-20:])
-        status = "pending" if personalize.get_all()["memory_review"] else "active"
         for fact in clean(client.llm_json(PROMPT.format(messages=text), max_tokens=300).get("facts")):
-            if memory_store.add(fact, source_conv=conv_id, source_msg=rows[-1]["id"], status=status):
+            if memory_store.add(fact, source_conv=conv_id, source_msg=rows[-1]["id"]):
                 saved += 1
     conn = assistant_db.connect()
     try:

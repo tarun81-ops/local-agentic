@@ -122,7 +122,7 @@ export function turnView(turn, opts) {
  * Appends the question and a live answer to `log`, streams /chat into it, and resolves with the
  * finished turn: {q, box, answer, route, citations, uncited, truncated, noResults, error, conversation:{id,title}}.
  */
-export async function ask({ log, message, conversationId, mode, root, context, signal, onScroll, opts }) {
+export async function ask({ log, message, conversationId, mode, root, context, style, language, signal, onScroll, opts }) {
   const turn = { q: message, answer: null, citations: [] };
   const [bubble, box] = turnView(turn);
   turn.box = box;
@@ -136,7 +136,7 @@ export async function ask({ log, message, conversationId, mode, root, context, s
 
   let text = '';
   await chat(
-    { message, conversationId, mode, root, context },
+    { message, conversationId, mode, root, context, style, language },
     {
       route: (d) => {
         turn.route = d.route;

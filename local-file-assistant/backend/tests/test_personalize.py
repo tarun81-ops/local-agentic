@@ -102,3 +102,25 @@ def test_strict_threshold_is_stricter():
     answer = "Revenue was 500 and Mumbai grew (report.pdf, page 2)."  # 2 of 3 facts in the source
     assert verify(answer, CHUNKS, THRESHOLD)["all_verified"]
     assert not verify(answer, CHUNKS, STRICT_THRESHOLD)["all_verified"]
+
+
+def test_per_request_style_and_language_override_the_saved_default(monkeypatch):
+    from app.api import routes_chat
+
+    seen = []
+
+    def fake_chat(message, history=None, model=None, style=""):
+        seen.append((message, style))
+        yield "ok"
+        return False
+
+    monkeypatch.setattr(routes_chat, "chat_stream", fake_chat)
+    monkeypatch.setattr(routes_chat.ram, "status", lambda: {"low": False, "free_mb": None})
+    personalize.update({"answer_style": "concise", "profile": "I study ETE"})
+    with TestClient(app, base_url="http://127.0.0.1:8756") as c:  # startup migrates the database
+        c.post("/chat", json={"message": "hello there", "mode": "chat", "style": "study", "language": "hinglish"}, headers=AUTH)
+        c.post("/chat", json={"message": "hello again", "mode": "chat", "style": "bogus"}, headers=AUTH)
+    (m1, s1), (m2, s2) = seen
+    assert "self-check" in s1 and "Hinglish" in s1
+    assert "brief" in s2 and "language the user writes in" in s2  # unknown style falls back to the saved one
+    assert "I study ETE" in m1 and m1.endswith("hello there")

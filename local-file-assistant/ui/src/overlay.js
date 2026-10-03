@@ -18,6 +18,7 @@ const footer = document.getElementById('overlay-footer');
 const status = document.getElementById('overlay-status');
 const tabHint = document.getElementById('tab-hint');
 const pin = document.getElementById('pin');
+const styleSel = document.getElementById('overlay-style');
 const chipBox = document.getElementById('context-chip');
 const tabs = [...document.querySelectorAll('.tab')];
 
@@ -174,7 +175,7 @@ async function runAsk() {
   status.textContent = 'LOCAL — ANSWERING';
   body.replaceChildren();
   markOptions();
-  const turn = await ask({ log: body, message, conversationId: convId, mode: 'auto', context, signal: aborter.signal, opts: { sourcesHeading: true } });
+  const turn = await ask({ log: body, message, conversationId: convId, mode: 'auto', context, style: styleSel.value, signal: aborter.signal, opts: { sourcesHeading: true } });
   if (turn.conversation) convId = turn.conversation.id;
   addActions(turn);
   if (readAloud.get() && turn.answer && !turn.error && !turn.noResults) speak(turn.answer).catch(() => {});

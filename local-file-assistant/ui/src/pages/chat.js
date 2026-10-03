@@ -3,6 +3,19 @@ import { ask, turnView, turnsFromMessages } from '../components/chat-log.js';
 import { el, fileName, notice, svg, ICONS } from '../components/common.js';
 import { micButton, readAloud, speak, stopSpeaking } from '../components/mic.js';
 
+const STYLES = [
+  ['', 'DEFAULT'],
+  ['concise', 'CONCISE'],
+  ['detailed', 'DETAILED'],
+  ['study', 'STUDY'],
+  ['simple', 'SIMPLE'],
+];
+const LANGS = [
+  ['', 'DEFAULT'],
+  ['english', 'ENGLISH'],
+  ['hinglish', 'HINGLISH'],
+];
+
 const MODES = [
   ['auto', 'AUTO'],
   ['files', 'FILES ONLY'],
@@ -20,6 +33,8 @@ export function render(container, { chatId, onChatsChanged }) {
 
   const scope = el('select', { id: 'ask-scope', class: 'scope-select', 'aria-label': 'Which files to search' }, el('option', { value: '' }, 'SEARCHING: ALL INDEXED FILES'));
   const mode = el('select', { id: 'chat-mode', class: 'scope-select', 'aria-label': 'Where answers come from' }, MODES.map(([v, t]) => el('option', { value: v }, `MODE: ${t}`)));
+  const style = el('select', { id: 'chat-style', class: 'scope-select', 'aria-label': 'Answer style for the next questions (saved default in Settings)' }, STYLES.map(([v, t]) => el('option', { value: v }, `STYLE: ${t}`)));
+  const lang = el('select', { id: 'chat-lang', class: 'scope-select', 'aria-label': 'Answer language for the next questions (saved default in Settings)' }, LANGS.map(([v, t]) => el('option', { value: v }, `LANGUAGE: ${t}`)));
   const log = el('div', { class: 'chat-log', id: 'chat-log', 'aria-live': 'polite' });
   const input = el('input', { id: 'ask-input', type: 'text', placeholder: 'Ask about your files, or anything else…', autocomplete: 'off' });
   const send = el('button', { type: 'button', class: 'send', 'aria-label': 'Send' }, svg(ICONS.send, 15));
@@ -44,6 +59,8 @@ export function render(container, { chatId, onChatsChanged }) {
       el('h1', { class: 'page-title' }, 'CHAT'),
       el('label', { class: 'scope' }, mode, svg(ICONS.chevron, 11)),
       el('label', { class: 'scope' }, scope, svg(ICONS.chevron, 11)),
+      el('label', { class: 'scope' }, style, svg(ICONS.chevron, 11)),
+      el('label', { class: 'scope' }, lang, svg(ICONS.chevron, 11)),
       el('label', { class: 'aloud', for: 'read-aloud' }, aloud, 'READ ANSWERS ALOUD'),
     ),
     log,
@@ -77,7 +94,7 @@ export function render(container, { chatId, onChatsChanged }) {
     if (!turns) log.replaceChildren();
     busy = new AbortController();
     send.disabled = true;
-    const turn = await ask({ log, message, conversationId: convId, mode: mode.value, root: scope.value, signal: busy.signal, onScroll: () => (log.scrollTop = log.scrollHeight) });
+    const turn = await ask({ log, message, conversationId: convId, mode: mode.value, root: scope.value, style: style.value, language: lang.value, signal: busy.signal, onScroll: () => (log.scrollTop = log.scrollHeight) });
     busy = null;
     send.disabled = false;
     turns++;

@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { openStudy } from '../components/study.js';
 import { badge, el, highlight, locLabel, notice, swatch } from '../components/common.js';
 
 const MATCH = { both: ['KEYWORD + SEMANTIC', 'blue'], keyword: ['KEYWORD', 'outline'], semantic: ['SEMANTIC', 'outline'] };
@@ -46,7 +47,7 @@ export function render(container) {
       if (mine !== seq) return;
       meta.textContent = `${data.results.length} RESULTS · ${(data.ms / 1000).toFixed(2)}S${data.semantic ? '' : ' · KEYWORD ONLY'}`;
       results.replaceChildren(
-        ...(data.results.length ? data.results.map((r) => resultRow(r, data.terms, open)) : [notice('No matches. Check the folder is added on the Index page, or try other words.')]),
+        ...(data.results.length ? data.results.map((r) => el('div', { class: 'result-wrap' }, resultRow(r, data.terms, open), el('button', { type: 'button', class: 'btn btn-outline btn-sm result-study', 'aria-label': `Study ${r.name}`, onclick: () => openStudy(r.path, r.name) }, 'STUDY'))) : [notice('No matches. Check the folder is added on the Index page, or try other words.')]),
       );
     } catch (e) {
       if (mine === seq) {
