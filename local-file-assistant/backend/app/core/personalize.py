@@ -14,6 +14,11 @@ PROFILE_MAX = 800
 STYLES = ("concise", "detailed", "study", "simple")
 LANGUAGES = ("auto", "english", "hinglish")
 VERIFIER = ("normal", "strict")
+THEMES = ("system", "light", "dark")
+ACCENTS = ("red", "blue", "green", "violet")
+OVERLAY_POSITIONS = ("cursor", "center", "top-right")
+FONT_SCALE = (0.9, 1.3)
+APPEARANCE = {"theme": "system", "accent": "red", "font_scale": 1.0, "overlay_compact": False, "overlay_position": "top-right"}
 
 DEFAULTS: dict = {
     "profile": "",
@@ -23,7 +28,7 @@ DEFAULTS: dict = {
     "verifier_strict": "normal",
     # reserved: validated loosely until their phase tightens them
     "perf_profile": "balanced",
-    "appearance": {},
+    "appearance": dict(APPEARANCE),
     "memory_review": True,
     "folder_profiles": {},
     "inbox_folders": [],
@@ -76,6 +81,23 @@ def clean_folder_profile(raw) -> dict:
     }
 
 
+def clean_appearance(raw) -> dict:
+    """Validates the appearance settings (a partial dict is fine; unknown keys are not)."""
+    if not isinstance(raw, dict) or set(raw) - set(APPEARANCE):
+        raise ValueError("appearance has the wrong shape.")
+    out = {**APPEARANCE, **raw}
+    for key, allowed in (("theme", THEMES), ("accent", ACCENTS), ("overlay_position", OVERLAY_POSITIONS)):
+        if out[key] not in allowed:
+            raise ValueError(f"{key} must be one of: {', '.join(allowed)}.")
+    scale = out["font_scale"]
+    if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not FONT_SCALE[0] <= scale <= FONT_SCALE[1]:
+        raise ValueError(f"font_scale must be a number from {FONT_SCALE[0]} to {FONT_SCALE[1]}.")
+    if not isinstance(out["overlay_compact"], bool):
+        raise ValueError("overlay_compact must be on or off.")
+    out["font_scale"] = round(float(scale), 2)
+    return out
+
+
 def clean_folder_profiles(raw) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("folder_profiles has the wrong shape.")
@@ -102,7 +124,9 @@ def get_all() -> dict:
     """Saved values over the defaults. A damaged or hand-edited entry falls back to the default."""
     stored = prefs.get(KEY, {})
     stored = stored if isinstance(stored, dict) else {}
-    return {k: stored.get(k, v) for k, v in DEFAULTS.items()}
+    out = {k: stored.get(k, v) for k, v in DEFAULTS.items()}
+    out["appearance"] = {**APPEARANCE, **(out["appearance"] if isinstance(out["appearance"], dict) else {})}
+    return out
 
 
 def _check(key: str, value):
@@ -120,6 +144,8 @@ def _check(key: str, value):
     elif isinstance(DEFAULTS[key], bool):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be on or off.")
+    elif key == "appearance":
+        value = clean_appearance(value)
     elif key == "folder_profiles":
         value = clean_folder_profiles(value)
     elif key in _RESERVED_TYPES:
@@ -132,6 +158,8 @@ def _check(key: str, value):
 
 def update(patch: dict) -> dict:
     """Partial update: validates every key first, so a bad value changes nothing."""
+    if isinstance(patch.get("appearance"), dict):  # a partial appearance change keeps the rest
+        patch = {**patch, "appearance": {**get_all()["appearance"], **patch["appearance"]}}
     clean = {k: _check(k, v) for k, v in patch.items()}
     merged = {**get_all(), **clean}
     prefs.set(KEY, merged)

@@ -8,8 +8,7 @@ const path = require('path');
 const DEFAULT_SHORTCUT = 'CommandOrControl+Shift+Space';
 // Rarely taken: Ctrl+Shift+V is plain-text paste in browsers, and Ctrl+Alt+Space is Claude desktop's quick entry.
 const DEFAULT_VOICE_SHORTCUT = 'CommandOrControl+Shift+Alt+V';
-const OVERLAY_W = 520;
-const OVERLAY_H = 640;
+const OVERLAY_SIZE = { normal: [520, 640], compact: [440, 400] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Windows shows toast notifications only for an app with a registered id (matches build.appId).
 app.setAppUserModelId('com.localfileassistant.app');
@@ -26,6 +25,7 @@ let tray = null;
 let shortcut = DEFAULT_SHORTCUT;
 let voiceShortcut = DEFAULT_VOICE_SHORTCUT;
 let overlayPinned = false;
+let overlayPrefs = { overlay_compact: false, overlay_position: 'top-right' }; // from Settings > Appearance; refreshed each time the overlay opens
 let lastContext = null; // what was in front when the overlay was summoned: {app, title, hwnd, selection}
 let summoning = false;
 let dragging = false; // a file is being dragged out of the panel: it must not hide on blur
@@ -178,8 +178,8 @@ function createOverlay() {
   // A compact panel, not a full-screen scrim: pages underneath stay visible and usable
   // (the file you find can be dragged into a website's upload box).
   overlay = new BrowserWindow({
-    width: OVERLAY_W,
-    height: OVERLAY_H,
+    width: OVERLAY_SIZE.normal[0],
+    height: OVERLAY_SIZE.normal[1],
     minWidth: 420,
     minHeight: 360,
     frame: false,
@@ -205,11 +205,36 @@ function showMain(page) {
   if (page) mainWindow.webContents.send('navigate', page);
 }
 
+async function refreshOverlayPrefs() {
+  if (!port) return;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/personalize`, { headers: { Authorization: `Bearer ${API_TOKEN}` }, signal: AbortSignal.timeout(1000) });
+    if (r.ok) {
+      const a = (await r.json()).appearance;
+      overlayPrefs = { overlay_compact: Boolean(a.overlay_compact), overlay_position: a.overlay_position };
+    }
+  } catch { /* backend busy or down: keep the last known choice */ }
+}
+
 function placeOverlay() {
-  // Right edge of the display the cursor is on. A pinned panel stays where the user put it.
+  // On the display the cursor is on: top right (default), centred, or beside the cursor.
+  // A pinned panel stays where the user put it.
   if (overlayPinned) return;
-  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-  overlay.setBounds({ x: wa.x + wa.width - OVERLAY_W - 16, y: wa.y + 16, width: OVERLAY_W, height: Math.min(OVERLAY_H, wa.height - 32) });
+  const cursor = screen.getCursorScreenPoint();
+  const wa = screen.getDisplayNearestPoint(cursor).workArea;
+  const [w, fullH] = OVERLAY_SIZE[overlayPrefs.overlay_compact ? 'compact' : 'normal'];
+  const h = Math.min(fullH, wa.height - 32);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  let x = wa.x + wa.width - w - 16;
+  let y = wa.y + 16;
+  if (overlayPrefs.overlay_position === 'center') {
+    x = wa.x + Math.round((wa.width - w) / 2);
+    y = wa.y + Math.round((wa.height - h) / 3);
+  } else if (overlayPrefs.overlay_position === 'cursor') {
+    x = clamp(cursor.x - Math.round(w / 2), wa.x + 8, wa.x + wa.width - w - 8);
+    y = clamp(cursor.y + 16, wa.y + 8, wa.y + wa.height - h - 8);
+  }
+  overlay.setBounds({ x, y, width: w, height: h });
 }
 
 async function backendPost(pathname, body) {
@@ -257,6 +282,7 @@ async function showOverlay() {
   summoning = true;
   try {
     lastContext = await captureContext(); // before we take focus
+    await refreshOverlayPrefs();
     placeOverlay();
     overlay.show();
     overlay.focus();

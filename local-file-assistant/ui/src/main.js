@@ -8,6 +8,7 @@ import './style.css';
 
 import { api, waitForBackend } from './api.js';
 import { el, notice } from './components/common.js';
+import { applyCached, loadAppearance } from './appearance.js';
 import { renderSidebar } from './components/sidebar.js';
 import { render as renderChat } from './pages/chat.js';
 import { render as renderIndex } from './pages/index.js';
@@ -16,6 +17,8 @@ import { render as renderOrganize } from './pages/organize.js';
 import { render as renderSearch } from './pages/search.js';
 import { render as renderSettings } from './pages/settings.js';
 import { render as renderTasks } from './pages/tasks.js';
+
+applyCached();
 
 const PAGES = { chat: renderChat, search: renderSearch, organize: renderOrganize, tasks: renderTasks, memory: renderMemory, index: renderIndex, settings: renderSettings };
 
@@ -96,6 +99,7 @@ async function boot() {
     content.replaceChildren(notice('The local backend didn’t start. Run scripts\\setup.ps1 once, then restart the app.', 'error'));
     return;
   }
+  loadAppearance();
   await importOldChats();
   state.ready = true;
   show(state.page);

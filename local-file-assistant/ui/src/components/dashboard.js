@@ -10,17 +10,19 @@ import { el, fileName, fmtDate } from './common.js';
 
 Chart.register(BarController, BarElement, DoughnutController, ArcElement, CategoryScale, LinearScale, Tooltip, Legend);
 
-const INK = '#14120F';
-const RED = '#E63312';
-const BLUE = '#1D3ED8';
-const YELLOW = '#D9A61C';
-const INK_FAINT = '#69645A';
-
-// Mirrors common.js's TYPES tones, so a file type is the same color here as its swatch elsewhere.
-const TYPE_COLOR = {
-  pdf: RED, docx: BLUE, doc: BLUE, xlsx: BLUE, pptx: INK,
-  png: YELLOW, jpg: YELLOW, jpeg: YELLOW, webp: YELLOW, bmp: YELLOW,
-};
+// Chart colours come from the theme's CSS tokens, read when the dashboard mounts, so charts
+// follow the light/dark theme and the accent (a theme change shows on the next visit).
+let INK, RED, BLUE, YELLOW, INK_FAINT, GRID, PAPER, TYPE_COLOR;
+function readPalette() {
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  [INK, RED, BLUE, YELLOW, INK_FAINT, GRID, PAPER] = ['--ink', '--red', '--blue', '--yellow', '--ink-faint', '--paper-alt', '--paper'].map(css);
+  // Mirrors common.js's TYPES tones, so a file type is the same color here as its swatch elsewhere.
+  TYPE_COLOR = {
+    pdf: RED, docx: BLUE, doc: BLUE, xlsx: BLUE, pptx: INK,
+    png: YELLOW, jpg: YELLOW, jpeg: YELLOW, webp: YELLOW, bmp: YELLOW,
+  };
+}
+readPalette();
 
 // The global `@media (prefers-reduced-motion: reduce)` rule in style.css only stops CSS
 // animation/transition — it can't reach a canvas (Chart.js) or a requestAnimationFrame loop
@@ -89,6 +91,7 @@ function fileTypeCounts(files) {
  * (and re-rendering) the file-type chart on every poll during an active scan.
  */
 export function mountDashboard(container, { roots, batches, files }) {
+  readPalette();
   const totalFiles = roots.reduce((n, r) => n + r.files, 0);
   const totalBytes = roots.reduce((n, r) => n + r.bytes, 0);
   const keywordOnly = roots.reduce((n, r) => n + r.keyword_only, 0);
@@ -128,7 +131,7 @@ export function mountDashboard(container, { roots, batches, files }) {
       plugins: { legend: { display: false }, tooltip: { bodyFont: FONT, titleFont: FONT } },
       scales: {
         x: { ticks: { font: FONT, color: INK_FAINT }, grid: { display: false } },
-        y: { beginAtZero: true, ticks: { font: FONT, color: INK_FAINT, precision: 0 }, grid: { color: '#EAE6DC' } },
+        y: { beginAtZero: true, ticks: { font: FONT, color: INK_FAINT, precision: 0 }, grid: { color: GRID } },
       },
     },
   });
@@ -146,7 +149,7 @@ export function mountDashboard(container, { roots, batches, files }) {
       type: 'doughnut',
       data: {
         labels: entries.map(([ext]) => ext.toUpperCase()),
-        datasets: [{ data: entries.map(([, n]) => n), backgroundColor: entries.map(([ext]) => TYPE_COLOR[ext] || INK_FAINT), borderColor: '#F5F3EE', borderWidth: 2 }],
+        datasets: [{ data: entries.map(([, n]) => n), backgroundColor: entries.map(([ext]) => TYPE_COLOR[ext] || INK_FAINT), borderColor: PAPER, borderWidth: 2 }],
       },
       options: {
         animation: CHART_ANIMATION,
@@ -179,7 +182,7 @@ export function mountDashboard(container, { roots, batches, files }) {
         plugins: { legend: { position: 'bottom', labels: { font: FONT, color: INK, boxWidth: 10 } }, tooltip: { bodyFont: FONT, titleFont: FONT } },
         scales: {
           x: { stacked: true, ticks: { font: FONT, color: INK_FAINT }, grid: { display: false } },
-          y: { stacked: true, beginAtZero: true, ticks: { font: FONT, color: INK_FAINT, precision: 0 }, grid: { color: '#EAE6DC' } },
+          y: { stacked: true, beginAtZero: true, ticks: { font: FONT, color: INK_FAINT, precision: 0 }, grid: { color: GRID } },
         },
       },
     });

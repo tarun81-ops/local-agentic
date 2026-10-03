@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { applyAppearance } from '../appearance.js';
 import { el, notice } from '../components/common.js';
 
 function kv(label, ...value) {
@@ -17,6 +18,7 @@ export function render(container, { onStatusChanged }) {
   const shortcutInput = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Alt+Space', 'aria-label': 'New shortcut' });
   const shortcutSet = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
   const meBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const lookBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const proBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const voiceBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const learnBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
@@ -58,6 +60,7 @@ export function render(container, { onStatusChanged }) {
       el('section', {}, sectionHead('04', 'PROACTIVE SUGGESTIONS'), proBox),
       el('section', {}, sectionHead('05', 'VOICE'), voiceBox),
       el('section', {}, sectionHead('06', 'LEARNING FROM USE'), learnBox),
+      el('section', {}, sectionHead('07', 'APPEARANCE'), lookBox),
     ),
   );
 
@@ -250,6 +253,51 @@ export function render(container, { onStatusChanged }) {
       meBox.replaceChildren(notice(e.message, 'error'));
     }
   }
+  // Appearance: every change applies at once and is saved. The overlay picks up its options next time it opens.
+  async function loadLook() {
+    try {
+      let current = (await api.personalize()).appearance;
+      const out = el('div');
+      const change = (patch) => {
+        current = applyAppearance({ ...current, ...patch });
+        api.savePersonalize({ appearance: patch }).then(() => out.replaceChildren(), (e) => out.replaceChildren(notice(e.message, 'error')));
+      };
+      const select = (id, label, key, options) => {
+        const input = el('select', { id, class: 'field field-mono' }, ...options.map(([v, t]) => el('option', { value: v, selected: v === current[key] }, t)));
+        input.addEventListener('change', () => change({ [key]: input.value }));
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const size = el('input', { id: 'lk-size', type: 'range', min: 0.9, max: 1.3, step: 0.05, value: current.font_scale, 'aria-label': 'Text size' });
+      const sizeNote = el('span', { class: 'quiet' }, `${Math.round(current.font_scale * 100)}%`);
+      size.addEventListener('input', () => {
+        sizeNote.textContent = `${Math.round(size.value * 100)}%`;
+        change({ font_scale: Number(size.value) });
+      });
+      const compact = el('input', { id: 'lk-compact', type: 'checkbox', class: 'toggle', role: 'switch' });
+      compact.checked = current.overlay_compact;
+      compact.addEventListener('change', () => change({ overlay_compact: compact.checked }));
+      lookBox.replaceChildren(
+        select('lk-theme', 'THEME', 'theme', [['system', 'FOLLOW WINDOWS'], ['light', 'LIGHT'], ['dark', 'DARK']]),
+        select('lk-accent', 'ACCENT COLOUR', 'accent', [['red', 'RED'], ['blue', 'BLUE'], ['green', 'GREEN'], ['violet', 'VIOLET']]),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-size' }, 'TEXT SIZE'), el('div', { class: 'row-gap' }, size, sizeNote)),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-compact' }, 'COMPACT OVERLAY (SMALLER, FEWER RESULTS)'), compact),
+        select('lk-pos', 'OVERLAY POSITION', 'overlay_position', [['top-right', 'TOP RIGHT'], ['center', 'CENTRE'], ['cursor', 'NEAR THE CURSOR']]),
+        el(
+          'div',
+          { class: 'look-preview', 'aria-label': 'Preview' },
+          el('span', { class: 'btn btn-primary btn-sm' }, 'PRIMARY'),
+          el('span', { class: 'btn btn-outline btn-sm' }, 'OUTLINE'),
+          el('span', { class: 'link-btn' }, 'LINK'),
+          el('span', { class: 'badge badge-red' }, 'ACCENT'),
+          el('span', { class: 'badge badge-blue' }, 'LOCAL'),
+        ),
+        out,
+      );
+    } catch (e) {
+      lookBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  loadLook();
   loadMe();
   loadLearning();
   loadVoice();

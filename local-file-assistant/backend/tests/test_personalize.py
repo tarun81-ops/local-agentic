@@ -124,3 +124,15 @@ def test_per_request_style_and_language_override_the_saved_default(monkeypatch):
     assert "self-check" in s1 and "Hinglish" in s1
     assert "brief" in s2 and "language the user writes in" in s2  # unknown style falls back to the saved one
     assert "I study ETE" in m1 and m1.endswith("hello there")
+
+
+def test_appearance_defaults_partial_update_and_validation():
+    assert personalize.get_all()["appearance"] == {"theme": "system", "accent": "red", "font_scale": 1.0, "overlay_compact": False, "overlay_position": "top-right"}
+    personalize.update({"appearance": {"theme": "dark"}})
+    personalize.update({"appearance": {"accent": "violet", "font_scale": 1.2}})
+    got = personalize.get_all()["appearance"]
+    assert (got["theme"], got["accent"], got["font_scale"], got["overlay_compact"]) == ("dark", "violet", 1.2, False)
+    for bad in ({"theme": "neon"}, {"accent": "pink"}, {"font_scale": 1.31}, {"font_scale": 0.89}, {"font_scale": True}, {"overlay_compact": "yes"}, {"overlay_position": "left"}, {"colour": "red"}):
+        with pytest.raises(ValueError):
+            personalize.update({"appearance": bad})
+    assert personalize.get_all()["appearance"]["theme"] == "dark"  # a rejected change changes nothing

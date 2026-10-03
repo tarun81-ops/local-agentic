@@ -7,10 +7,13 @@ import '@fontsource/space-mono/700.css';
 import './style.css';
 
 import { api, waitForBackend } from './api.js';
+import { applyCached, loadAppearance } from './appearance.js';
 import { ask } from './components/chat-log.js';
 import { micButton, readAloud, speak } from './components/mic.js';
 import { badge, el, fmtBytes, notice, swatch } from './components/common.js';
 import { resultRow } from './pages/search.js';
+
+applyCached();
 
 const input = document.getElementById('query');
 const body = document.getElementById('overlay-body');
@@ -142,7 +145,7 @@ async function runSearch() {
     status.textContent = `${data.results.length} RESULTS · ${(data.ms / 1000).toFixed(2)}S`;
     body.replaceChildren(
       ...(data.results.length
-        ? data.results.map((r) => resultRow(r, data.terms, (row) => api.open(row.path, input.value.trim()).then(() => window.lfa.hideOverlay()).catch(() => {})))
+        ? data.results.slice(0, document.body.classList.contains('overlay-compact') ? 4 : undefined).map((r) => resultRow(r, data.terms, (row) => api.open(row.path, input.value.trim()).then(() => window.lfa.hideOverlay()).catch(() => {})))
         : [notice('No matches in your indexed files.')]),
     );
     markOptions();
@@ -289,6 +292,7 @@ pin.addEventListener('click', () => {
 window.lfa.onOverlayShown(reset);
 
 waitForBackend({ onWaiting: () => (status.textContent = 'STARTING…') }).then((up) => {
+  if (up) loadAppearance();
   status.textContent = up ? 'LOCAL — READY' : 'BACKEND NOT RUNNING';
 });
 setMode('search');
