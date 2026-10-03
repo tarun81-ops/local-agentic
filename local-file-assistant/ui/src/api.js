@@ -107,6 +107,7 @@ export const api = {
   addRoot: (folder) => request('/files/roots', { method: 'POST', body: { folder } }),
   removeRoot: (folder) => request('/files/roots/remove', { method: 'POST', body: { folder } }),
   rescan: (folder) => request('/files/index', { method: 'POST', body: { folder } }),
+  saveFolderProfile: (folder, profile) => request('/files/roots/profile', { method: 'PUT', body: { folder, profile } }),
   indexStatus: () => request('/files/index/status'),
   cancelIndex: () => request('/files/index/cancel', { method: 'POST' }),
   // query: the search that led here (optional); the backend learns which files you open for which searches

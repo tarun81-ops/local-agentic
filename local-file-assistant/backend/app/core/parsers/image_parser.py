@@ -8,6 +8,7 @@
 With neither, images are not indexed (see parsers/__init__.py). See docs/decisions/0001-images.md."""
 import base64
 import logging
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from app.core.chunking import Chunk, chunk_located
 
 log = logging.getLogger(__name__)
 
+# Set by the indexer around one file: True/False overrides CAPTION_IMAGES for that file's folder.
+CAPTION_OVERRIDE: ContextVar[bool | None] = ContextVar("caption_override", default=None)
 MAX_CAPTION_BYTES = 8 * 1024 * 1024  # bigger images are OCR-only
 _MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".bmp": "image/bmp"}
 CAPTION_PROMPT = "Describe this image in one factual sentence for a file search index. Mention any visible names, dates or numbers."
@@ -61,7 +64,8 @@ def caption(path: Path) -> str:
 
 def parse_image(path: Path) -> list[Chunk]:
     parts = []
-    if settings.caption_images:
+    override = CAPTION_OVERRIDE.get()
+    if settings.caption_images if override is None else override:
         try:
             text = caption(path)
             if text:

@@ -15,6 +15,9 @@ from app.core.assistant.router import memory_command, needs_rewrite, route, task
 from app.core.llm.answerer import answer_stream, chat_stream, rewrite_query
 from app.core.llm.verifier import STRICT_THRESHOLD, THRESHOLD, verify
 from app.core.search.hybrid import hybrid_search
+from app.db import sqlite_fts
+from app.config import settings
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -56,6 +59,21 @@ def _recall(message: str) -> list[dict]:
     except Exception:  # memory is a bonus: a failure must never block an answer
         log.exception("memory recall failed")
         return []
+
+
+def _folder_style(root: str | None, chunks: list[dict]) -> str:
+    """The answer style of the folder being asked about (the request's root, else the top result's
+    folder), or "" when it has none. Never lets a lookup problem block an answer."""
+    try:
+        conn = sqlite_fts.connect(settings.db_path)
+        try:
+            found = root or (sqlite_fts.root_for(conn, Path(chunks[0]["path"])) if chunks else None)
+        finally:
+            conn.close()
+        return personalize.folder_profile(found).get("answer_style", "") if found else ""
+    except Exception:
+        log.exception("folder style lookup failed")
+        return ""
 
 
 def _memory_reply(kind: str, text: str) -> str:
@@ -147,7 +165,8 @@ def _stream(req: ChatRequest, conv: dict | None):
     answer = ""
     truncated = False
     pz = personalize.get_all()
-    style = prompts.style_instruction(req.style if req.style in personalize.STYLES else pz["answer_style"], req.language if req.language in personalize.LANGUAGES else pz["language"], pz["cite_pages"])
+    chosen = req.style if req.style in personalize.STYLES else _folder_style(req.root, chunks) or pz["answer_style"]  # request > folder > saved default
+    style = prompts.style_instruction(chosen, req.language if req.language in personalize.LANGUAGES else pz["language"], pz["cite_pages"])
     # Order: screen context, profile, memory, then the message. The search used the bare message.
     prompt = prompts.with_memory(prompts.with_profile(prompts.with_context(req.message, req.context), pz["profile"]), remembered)
     deltas = answer_stream(prompt, chunks, history, model=req.model, style=style) if kind == "files" else chat_stream(prompt, history, model=req.model, style=style)

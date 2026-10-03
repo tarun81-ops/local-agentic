@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
-from app.core import indexer
+from app.core import indexer, personalize
 from app.core.assistant import learning
 from app.core.watcher import watcher
 from app.db import sqlite_fts
@@ -100,6 +100,7 @@ def roots():
     running = progress["folder"] if progress["state"] == "running" else None
     queued = set(progress.get("queue") or [])
     for r in rows:
+        r["profile"] = personalize.folder_profile(r["path"])
         if r["path"] == running:
             r["state"] = "scanning"
             r["progress"] = progress
@@ -124,6 +125,28 @@ def add_root(req: FolderRequest):
         conn.close()
     watcher.refresh()
     return _start_index([folder])
+
+
+class ProfileRequest(BaseModel):
+    folder: str
+    profile: dict
+
+
+@router.put("/roots/profile")
+def save_profile(req: ProfileRequest):
+    """Saves a folder's rules, then rescans it so files the new rules exclude leave the index
+    and newly allowed ones come in. If a scan is already running the rescan is left to the user."""
+    folder = _existing_dir(req.folder)
+    try:
+        profile = personalize.set_folder_profile(folder, req.profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        _start_index([folder])
+        rescan = "started"
+    except HTTPException:
+        rescan = "busy"
+    return {"profile": profile, "rescan": rescan}
 
 
 @router.post("/roots/remove")
