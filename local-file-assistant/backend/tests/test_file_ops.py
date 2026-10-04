@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from app.core.file_ops import file_mover
@@ -66,5 +68,5 @@ def test_plan_finds_duplicates_and_junk_without_the_model():
     ops = {(a.op, a.path, a.to) for a in plan.actions}
     assert ("delete", "/r/copy of a.pdf", None) in ops
     assert ("delete", "/r/notes.txt.bak", None) in ops
-    assert ("move", "/r/invoice.pdf", "/r/Finance/Invoices/invoice.pdf") in ops
+    assert ("move", "/r/invoice.pdf", str(Path("/r") / "Finance" / "Invoices" / "invoice.pdf")) in ops  # destinations use the OS separator
     assert plan.dropped_invalid == 2

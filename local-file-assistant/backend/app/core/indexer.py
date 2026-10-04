@@ -2,6 +2,7 @@ import fnmatch
 import hashlib
 import logging
 import threading
+import traceback
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,7 +64,11 @@ def _hash_file(path: Path) -> str:
 
 
 def _record_error(path: Path, exc: Exception) -> None:
-    log.error("failed to index %s: %s", path, exc, exc_info=not isinstance(exc, RuntimeError))
+    # The traceback goes in as text, not as a live exc_info: a log record that keeps the exception
+    # alive also keeps its frames alive, and a parser that failed half-way can still hold the
+    # file open, which on Windows blocks moving or deleting the file afterwards.
+    trace = "" if isinstance(exc, RuntimeError) else "\n" + "".join(traceback.format_exception(exc)).rstrip()
+    log.error("failed to index %s: %s%s", path, str(exc), trace)
     RECENT_ERRORS.appendleft(
         {
             "path": str(path),

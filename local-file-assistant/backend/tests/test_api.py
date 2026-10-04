@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,7 +71,7 @@ def test_index_search_organize_undo_flow(client, corpus, monkeypatch):
         lambda candidates, model: [{"path": str(corpus.resolve() / "meeting_notes.docx"), "folder": "Meeting Notes"}],
     )
     plan = client.post("/organize/plan", json={"root": str(corpus.resolve())}, headers=AUTH).json()
-    ops = {(a["op"], a["path"].rsplit("/", 1)[-1]) for a in plan["actions"]}
+    ops = {(a["op"], Path(a["path"]).name) for a in plan["actions"]}  # paths use the OS separator
     assert ("move", "meeting_notes.docx") in ops
     assert any(op == "delete" for op, _ in ops)
 
