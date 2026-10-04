@@ -40,7 +40,7 @@ PROFILE_MAX = 800
 _STYLES = {
     "concise": "Be brief: a few sentences.",
     "detailed": "Give a thorough answer with the reasoning.",
-    "study": "Use short headed sections, then end with 2 self-check questions for the user.",
+    "study": "Use short headed sections, then end with 2 self-check questions about the topic of this answer, never about the user.",
     "simple": "Use plain words and short sentences, and give one example.",
 }
 _LANGS = {
@@ -64,7 +64,7 @@ def with_profile(message: str, profile: str) -> str:
     profile = (profile or "").strip()[:PROFILE_MAX]
     if not profile:
         return message
-    return f"(What the user told you about themselves. Not file excerpts: never cite it as a file.)\n{profile}\n\n{message}"
+    return f"(Background about the user, only to suit your tone and examples. It is not the topic: never ask about it, repeat it or cite it as a file.)\n{profile}\n\n{message}"
 
 
 def with_memory(message: str, facts: list[dict]) -> str:

@@ -64,7 +64,7 @@ def test_style_instruction_is_short_in_every_combination():
 
 def test_profile_is_labelled_truncated_and_never_a_citation():
     out = prompts.with_profile("question?", "I study ETE " + "y" * 2000)
-    assert "never cite" in out and out.endswith("question?")
+    assert "cite it as a file" in out and out.endswith("question?")
     assert len(out) < prompts.PROFILE_MAX + 200
     assert prompts.with_profile("q", "  ") == "q"
     # the verifier only accepts file-shaped citations, so profile text can't become one
@@ -136,3 +136,12 @@ def test_appearance_defaults_partial_update_and_validation():
         with pytest.raises(ValueError):
             personalize.update({"appearance": bad})
     assert personalize.get_all()["appearance"]["theme"] == "dark"  # a rejected change changes nothing
+
+
+def test_study_questions_and_profile_wording_keep_the_profile_out_of_the_content():
+    """Found live: with About me set, the 2B model wrote its self-check questions about the profile."""
+    study = prompts.style_instruction("study", "auto", True)
+    assert "about the topic of this answer, never about the user" in study
+    assert len(study.split()) <= 40
+    framed = prompts.with_profile("question?", "First-year ETE student in Raipur.")
+    assert "not the topic" in framed and "never ask about it" in framed and "cite it as a file" in framed
