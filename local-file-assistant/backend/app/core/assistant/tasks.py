@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from app.core.assistant import dates
 from app.db import assistant_db
 
-_TASK_FIELDS = ("title", "notes", "due_at", "remind_at", "repeat", "status")
+_TASK_FIELDS = ("title", "notes", "due_at", "remind_at", "repeat", "status", "file_path")
 _EVENT_FIELDS = ("title", "start_at", "end_at", "all_day", "location", "notes")
 
 
@@ -32,10 +32,10 @@ def _exec(sql: str, args=()) -> int:
 
 # ---------- tasks ----------
 
-def create(title: str, notes: str = "", due_at=None, remind_at=None, repeat=None, created_from_msg=None) -> dict:
+def create(title: str, notes: str = "", due_at=None, remind_at=None, repeat=None, created_from_msg=None, file_path=None) -> dict:
     tid = _exec(
-        "INSERT INTO tasks(title, notes, due_at, remind_at, repeat, created_from_msg, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (title.strip(), notes, due_at, remind_at, repeat, created_from_msg, time.time()),
+        "INSERT INTO tasks(title, notes, due_at, remind_at, repeat, created_from_msg, created_at, file_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (title.strip(), notes, due_at, remind_at, repeat, created_from_msg, time.time(), file_path),
     )
     return get(tid)
 

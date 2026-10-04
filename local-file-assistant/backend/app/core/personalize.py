@@ -87,6 +87,24 @@ def clean_folder_profile(raw) -> dict:
     }
 
 
+MAX_INBOX = 10
+
+
+def clean_inbox_folders(raw) -> list[str]:
+    """Folders watched for the new-file nudge: existing folders, resolved, no duplicates."""
+    if not isinstance(raw, list) or len(raw) > MAX_INBOX or not all(isinstance(f, str) for f in raw):
+        raise ValueError(f"Inbox folders are a list of at most {MAX_INBOX} folders.")
+    out: list[str] = []
+    for f in raw:
+        path = Path(f).expanduser()
+        if not path.is_dir():
+            raise ValueError(f"Not a folder: {f}")
+        resolved = str(path.resolve())
+        if norm_path(resolved) not in {norm_path(x) for x in out}:
+            out.append(resolved)
+    return out
+
+
 def clean_appearance(raw) -> dict:
     """Validates the appearance settings (a partial dict is fine; unknown keys are not)."""
     if not isinstance(raw, dict) or set(raw) - set(APPEARANCE):
@@ -150,6 +168,8 @@ def _check(key: str, value):
     elif isinstance(DEFAULTS[key], bool):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be on or off.")
+    elif key == "inbox_folders":
+        value = clean_inbox_folders(value)
     elif key in ("perf_unload_minutes", "perf_min_free_ram_mb"):
         lo, hi = UNLOAD_MINUTES if key == "perf_unload_minutes" else MIN_FREE_RAM
         if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi):

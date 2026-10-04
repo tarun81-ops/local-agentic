@@ -2,12 +2,13 @@
 from a template (text); the model only rephrases them when the user turns that on. Whether a
 message may go out now is decided here too: per-kind switches, quiet hours, a daily cap, and
 once per day per kind (nudge_log)."""
+import os
 import re
 from datetime import datetime
 from datetime import time as dtime
 
 from app.config import settings as app_settings
-from app.core import prefs, ram
+from app.core import personalize, prefs, ram
 from app.core.assistant import tasks
 from app.core.llm import client, idle
 from app.db import assistant_db, sqlite_fts
@@ -124,6 +125,52 @@ def phrase(data: dict) -> str:
         return base
 
 
+# ---------- new files in your inbox folders (opt-in) ----------
+
+_PARTIAL = (".crdownload", ".part", ".partial", ".tmp")  # a download still in progress
+
+
+def _appeared(folder: str, since: float) -> list[str]:
+    """Names of files directly in `folder` created after `since`. Hidden, Office lock and
+    half-downloaded files don't count. Only names are read; nothing is opened or moved."""
+    out = []
+    try:
+        with os.scandir(folder) as entries:
+            for e in entries:
+                if not e.is_file(follow_symlinks=False) or e.name.startswith((".", "~$")) or e.name.lower().endswith(_PARTIAL):
+                    continue
+                st = e.stat()
+                if getattr(st, "st_birthtime", st.st_ctime) > since:
+                    out.append(e.name)
+    except OSError:
+        return []
+    return sorted(out)
+
+
+def new_files(now_ts: float) -> list[tuple[str, list[str]]]:
+    """[(folder, names)] for inbox folders with files that appeared since the last nudge. A folder
+    seen for the first time only gets a starting point, so the files already there aren't announced."""
+    folders = personalize.get_all()["inbox_folders"]
+    marks = dict(prefs.get("inbox_checked", {}))
+    found = []
+    for f in folders:
+        if f not in marks:
+            marks[f] = now_ts
+            prefs.set("inbox_checked", marks)
+            continue
+        names = _appeared(f, marks[f])
+        if names:
+            found.append((f, names))
+    return found
+
+
+def _new_files_body(found: list[tuple[str, list[str]]]) -> str:
+    total = sum(len(n) for _, n in found)
+    where = "; ".join(f"{os.path.basename(os.path.normpath(f)) or f} ({len(n)})" for f, n in found)
+    names = _list([name for _, n in found for name in n][:SHOWN], total)
+    return f"{total} new file{'s' if total > 1 else ''} in {where}: {names}. Open Organize to sort them. Nothing moves until you approve."
+
+
 # ---------- when to send ----------
 
 def _logged(day: str) -> dict[str, int]:
@@ -165,8 +212,15 @@ def due(now: datetime) -> list[dict]:
     if cfg["overdue"] and "overdue" not in logged and room > 0 and now.hour >= OVERDUE_HOUR and data["overdue"]:
         body = f"{len(data['overdue'])} overdue: " + _list(data["overdue"][:SHOWN], len(data["overdue"]))
         out.append({"type": "nudge", "kind": "overdue", "title": "Overdue tasks", "body": body, "day": day})
+        room -= 1
+    if "new_files" not in logged and room > 0 and personalize.get_all()["inbox_folders"]:
+        found = new_files(now.timestamp())
+        if found:
+            out.append({"type": "nudge", "kind": "new_files", "title": "New files to sort", "body": _new_files_body(found), "day": day, "page": "organize", "checked_at": now.timestamp()})
     return out
 
 
 def mark_sent(event: dict) -> None:
     _log(event["kind"], event["day"], 1)
+    if event.get("checked_at"):  # the next new-file check starts from this one
+        prefs.set("inbox_checked", {f: event["checked_at"] for f in personalize.get_all()["inbox_folders"]})

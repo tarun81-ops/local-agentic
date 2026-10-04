@@ -389,3 +389,5 @@ body.overlay { background: var(--paper); overflow: hidden; }
 body.overlay.overlay-compact .overlay-note, body.overlay.overlay-compact .overlay-footer, body.overlay.overlay-compact .mark-overlay { display: none; }
 body.overlay.overlay-compact .overlay-input { padding: 10px 14px; }
 body.overlay.overlay-compact .overlay-tabs { padding: 6px 14px; }
+
+.result-study { display: flex; gap: 8px; }

@@ -40,7 +40,8 @@ export function render(container) {
       'div',
       { class: `task-row ${done ? 'task-done' : ''}` },
       check,
-      el('div', { class: 'task-main' }, el('div', { class: 'task-title' }, t.title), el('div', { class: 'task-when' }, [when != null ? whenText(when) : 'NO DATE', t.repeat ? `REPEATS ${t.repeat.toUpperCase()}` : ''].filter(Boolean).join(' · '))),
+      el('div', { class: 'task-main' }, el('div', { class: 'task-title' }, t.title), el('div', { class: 'task-when' }, [when != null ? whenText(when) : 'NO DATE', t.repeat ? `REPEATS ${t.repeat.toUpperCase()}` : ''].filter(Boolean).join(' · ')), t.file_path ? el('div', { class: 'task-when' }, `FILE: ${t.file_path.split(/[\\/]/).pop()}`) : ''),
+      t.file_path ? el('button', { type: 'button', class: 'btn btn-ink btn-sm', 'aria-label': `Open the file for: ${t.title}`, onclick: () => api.open(t.file_path).catch(fail) }, 'OPEN') : '',
       done
         ? ''
         : el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => api.snoozeTask(t.id, 10).then(load, fail) }, 'SNOOZE 10 MIN'),

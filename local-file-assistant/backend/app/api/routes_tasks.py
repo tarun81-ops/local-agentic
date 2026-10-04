@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from app.config import settings
 from app.core.assistant import ics, tasks
+from app.db import sqlite_fts
 
 router = APIRouter(tags=["tasks"])
 
@@ -13,6 +15,7 @@ class NewTask(BaseModel):
     due_at: float | None = None
     remind_at: float | None = None
     repeat: str | None = None
+    file_path: str | None = None  # an indexed file this reminder is about
 
 
 class TaskPatch(BaseModel):
@@ -22,6 +25,7 @@ class TaskPatch(BaseModel):
     remind_at: float | None = None
     repeat: str | None = None
     status: str | None = None
+    file_path: str | None = None  # "" or null clears it
 
 
 class NewEvent(BaseModel):
@@ -60,6 +64,20 @@ def _valid_title(title: str | None) -> None:
         raise HTTPException(422, "A title is required.")
 
 
+def _indexed_file(path: str | None) -> str | None:
+    """A reminder may point only at a file in the index (the same rule as /files/open), so a task
+    can never become a way to name an arbitrary path. Empty means no file."""
+    if not path:
+        return None
+    conn = sqlite_fts.connect(settings.db_path)
+    try:
+        if not sqlite_fts.is_indexed(conn, path):
+            raise HTTPException(422, "That file isn't in the index (it may have moved).")
+    finally:
+        conn.close()
+    return path
+
+
 def _need(row):
     if row is None:
         raise HTTPException(404, "Not found")
@@ -74,7 +92,7 @@ def list_tasks(status: str | None = None):
 @router.post("/tasks")
 def create_task(body: NewTask):
     _valid_title(body.title)
-    return tasks.create(body.title, body.notes, body.due_at, body.remind_at, body.repeat)
+    return tasks.create(body.title, body.notes, body.due_at, body.remind_at, body.repeat, file_path=_indexed_file(body.file_path))
 
 
 @router.post("/tasks/parse")
@@ -98,7 +116,10 @@ def import_ics(body: IcsText):
 def patch_task(tid: int, body: TaskPatch):
     _valid_title(body.title)
     _need(tasks.get(tid))
-    return tasks.update(tid, **body.model_dump(exclude_unset=True))
+    fields = body.model_dump(exclude_unset=True)
+    if "file_path" in fields:
+        fields["file_path"] = _indexed_file(fields["file_path"])
+    return tasks.update(tid, **fields)
 
 
 @router.post("/tasks/{tid}/complete")

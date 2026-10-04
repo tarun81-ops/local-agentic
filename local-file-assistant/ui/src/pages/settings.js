@@ -20,6 +20,7 @@ export function render(container, { onStatusChanged }) {
   const meBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const perfBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const lookBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const inboxBox = el('div', { class: 'box box-pad stack' });
   const proBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const voiceBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const learnBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
@@ -58,7 +59,7 @@ export function render(container, { onStatusChanged }) {
           ),
         ),
       ),
-      el('section', {}, sectionHead('04', 'PROACTIVE SUGGESTIONS'), proBox),
+      el('section', {}, sectionHead('04', 'PROACTIVE SUGGESTIONS'), proBox, inboxBox),
       el('section', {}, sectionHead('05', 'VOICE'), voiceBox),
       el('section', {}, sectionHead('06', 'LEARNING FROM USE'), learnBox),
       el('section', {}, sectionHead('07', 'APPEARANCE'), lookBox),
@@ -332,6 +333,29 @@ export function render(container, { onStatusChanged }) {
       perfBox.replaceChildren(notice(e.message, 'error'));
     }
   }
+  // New-file nudge: opt-in. With no folders listed it never looks at anything; it only counts new files by name and never moves one.
+  async function loadInbox() {
+    try {
+      const { inbox_folders: folders } = await api.personalize();
+      const out = el('div');
+      const save = (next) => api.savePersonalize({ inbox_folders: next }).then(loadInbox, (e) => out.replaceChildren(notice(e.message, 'error')));
+      const add = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, '+ ADD A FOLDER');
+      add.addEventListener('click', async () => {
+        const picked = await window.lfa.pickFolder();
+        if (picked) save([...folders, picked]);
+      });
+      inboxBox.replaceChildren(
+        el('div', { class: 'mem-group' }, 'NEW-FILE NUDGE (OFF UNTIL YOU ADD A FOLDER)'),
+        el('div', { class: 'quiet' }, 'When new files appear in these folders (say Downloads), I can tell you once a day and offer to open Organize. I only read file names. Nothing is moved unless you approve a plan.'),
+        ...folders.map((f) => el('div', { class: 'kv kv-plain' }, el('div', { class: 'folder-path' }, f), el('button', { type: 'button', class: 'link-btn', 'aria-label': `Stop watching ${f}`, onclick: () => save(folders.filter((x) => x !== f)) }, 'REMOVE'))),
+        el('div', { class: 'row-gap' }, add),
+        out,
+      );
+    } catch (e) {
+      inboxBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  loadInbox();
   loadPerf();
   loadLook();
   loadMe();

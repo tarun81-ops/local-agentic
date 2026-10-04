@@ -48,7 +48,7 @@ def tick(now: float | None = None) -> int:
     now = now or time.time()
     fired = []
     for t in tasks.due_reminders(now):
-        event = {"type": "reminder", "missed": now - t["remind_at"] > MISSED_AFTER_S, "task": {k: t[k] for k in ("id", "title", "due_at", "remind_at")}}
+        event = {"type": "reminder", "missed": now - t["remind_at"] > MISSED_AFTER_S, "task": {k: t[k] for k in ("id", "title", "due_at", "remind_at", "file_path")}}
         if bus.publish(event) == 0:
             break  # nobody is listening yet: leave the rest for the next tick
         fired.append(t["id"])

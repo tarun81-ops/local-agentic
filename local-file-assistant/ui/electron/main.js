@@ -324,10 +324,14 @@ function showNotice(type, event) {
   if (!Notification.isSupported()) return;
   const n =
     type === 'reminder'
-      ? new Notification({ title: event.missed ? 'Missed reminder' : 'Reminder', body: event.task.title })
+      ? new Notification({ title: event.missed ? 'Missed reminder' : 'Reminder', body: event.task.file_path ? `${event.task.title} — click to open ${path.basename(event.task.file_path)}` : event.task.title })
       : new Notification({ title: event.title, body: event.body }); // briefing, nudge
   shownNotifications.add(n);
-  n.on('click', () => showMain('tasks'));
+  n.on('click', () => {
+    // A reminder about a file opens that file (through the backend, which only opens indexed files).
+    if (type === 'reminder' && event.task.file_path) backendPost('/files/open', { path: event.task.file_path }).catch(() => showMain('tasks'));
+    else showMain(event.page || 'tasks');
+  });
   n.on('close', () => shownNotifications.delete(n));
   n.show();
 }
