@@ -95,3 +95,45 @@ Ranking learns a little from use: files opened for similar searches may rise at 
 
 `eval/assistant_eval.py` checks the rules (router, dates, memory filter) without a model; `run_eval.py`
 also reports an answer-relevance heuristic.
+
+## Personalization
+
+Everything the user can tune lives in one place, `core/personalize.py`, stored under the single key
+`personalize` in `settings.json` (data dir) and edited from Settings or `GET/PUT /personalize`. `update()`
+validates every key before saving, so a bad value changes nothing, and partial updates keep the rest.
+
+- **Profile and style.** The About me text (max 800 characters), answer style (concise, detailed, study,
+  simple), reply language and "cite pages" become two bounded additions to a prompt: `with_profile` puts the
+  profile in front of the question, labelled as what the user said about themselves and never to be cited as
+  a file (same pattern as `with_memory`), and `style_instruction` adds one line of about 40 words to the file
+  prompt or the chat system prompt. Order: screen context, profile, memory, message. Search and the query
+  rewrite still use the bare message. A request can override style and language for one question; an
+  indexed folder can set its own style (request > folder > saved default). A test keeps the added text under
+  a fixed size, because the 2B model pays for every token.
+- **Citation strictness.** `verifier_strict` raises the verifier threshold from 0.6 to 0.85.
+- **Memory review.** Facts learned from chats are saved as `pending` (migration 0007) and only become
+  active, and usable by recall and the prompt, when the user approves them. "Remember that ..." is an
+  explicit request and is active at once. The sensitive-category filter is applied before anything is saved,
+  even as pending.
+- **Folder profiles.** Per indexed folder: label, answer style, file-type allowlist, exclusion patterns,
+  caption and OCR-only choices. Keys are resolved and case-folded paths. One function (`indexer.is_allowed`)
+  is used by the folder scan and, through `index_file`, by the watcher, so they agree; saving a profile
+  rescans the folder and files the new rules exclude leave both stores through the existing `_forget` path.
+- **Collections and recent files.** Saved searches (`collections` table) and `GET /files/recent` (latest
+  opens, then files changed this week, indexed files only). The recent list is derived from `file_opens`,
+  so wiping what is learned from use clears it; collections are the user's own data and survive the wipe.
+- **Appearance.** Theme (light, dark, follow Windows), accent, text size, overlay compactness and position.
+  The accent drives the `--red*` tokens. `tests/test_contrast.py` reads the real tokens in `style.css` and
+  fails below 4.5:1 for small text or 3:1 for UI colours in every theme and accent. The pages apply a cached
+  copy at once, then the saved one; the Electron main process reads the overlay options each time it opens.
+- **Performance profiles.** Battery, balanced (today's values), plugged in and auto (from
+  `psutil.sensors_battery()`, balanced when there is no battery). `personalize.effective(name)` resolves a custom
+  field, then the profile, then `.env`, and is what idle unload, the RAM guard, history length, captions and
+  the embedder keep-alive read. A bigger model is only ever mentioned in a note; nothing switches it.
+- **Study cards.** `POST /study/generate` builds flashcards or quiz questions from one indexed file within a
+  character budget (sampled evenly across long files), validates the model's JSON in code, and refuses when
+  RAM is low. Nothing is stored; export is a CSV.
+- **Reminders about files and the new-file nudge.** A task may point at an indexed file (validated on the
+  server). The new-file nudge is a proactive kind like the briefing: it needs inbox folders chosen by the
+  user, reads only names, respects quiet hours, the daily cap and the once-per-day log, and only offers to
+  open Organize.

@@ -75,6 +75,12 @@ try {
   $null = Invoke-RestMethod "http://127.0.0.1:$port/conversations" -Headers $headers
   $null = Invoke-RestMethod "http://127.0.0.1:$port/memory" -Headers $headers
   $null = Invoke-RestMethod "http://127.0.0.1:$port/tasks" -Headers $headers
+  # Personalization: the new router answers with defaults, and migration 0007 (collections, memory status) ran.
+  $pz = Invoke-RestMethod "http://127.0.0.1:$port/personalize" -Headers $headers
+  if ($pz.answer_style -ne "concise" -or $pz.appearance.theme -ne "system" -or $pz.perf_profile -ne "balanced") { throw "Personalization defaults are wrong in the frozen backend" }
+  $null = Invoke-RestMethod "http://127.0.0.1:$port/collections" -Headers $headers
+  $null = Invoke-RestMethod "http://127.0.0.1:$port/memory?status=pending" -Headers $headers
+  $null = Invoke-RestMethod "http://127.0.0.1:$port/personalize/performance" -Headers $headers
   $parsed = Invoke-RestMethod "http://127.0.0.1:$port/tasks/parse" -Method Post -Headers ($headers + $json) -Body '{"text":"remind me to call mom tomorrow at 5pm"}'
   if (-not $parsed.when -or $parsed.title -ne "Call mom") { throw "Date parsing failed in the frozen backend" }
   $voice = Invoke-RestMethod "http://127.0.0.1:$port/voice/status" -Headers $headers

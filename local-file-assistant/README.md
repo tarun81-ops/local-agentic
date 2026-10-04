@@ -19,6 +19,15 @@ cd ui; npm run dev                 # opens the app; it starts the backend itself
 Press **Ctrl+Shift+Space** anywhere to open the search/ask overlay. Closing the window keeps
 the app in the tray; quit from the tray menu.
 
+## Make it yours
+
+Settings > ABOUT ME & ANSWERS holds a short note about you, the answer style (concise, detailed, study,
+simple), the reply language and how strictly citations are checked. What the assistant learns from chats waits
+for your approval on the Memory page. Each folder on the Index page has its own file types, exclusions and
+answer style, searches can be saved as collections, and Settings also has the theme and accent, the
+performance profile (battery, balanced, plugged in, auto) and an opt-in nudge for new files in folders such
+as Downloads. All of it is stored on this PC and sent nowhere.
+
 ## Tests
 
 ```powershell
