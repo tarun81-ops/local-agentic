@@ -391,3 +391,8 @@ body.overlay.overlay-compact .overlay-input { padding: 10px 14px; }
 body.overlay.overlay-compact .overlay-tabs { padding: 6px 14px; }
 
 .result-study { display: flex; gap: 8px; }
+
+/* chat header: four selects plus a toggle must wrap, not overflow */
+.page-head { flex-wrap: wrap; row-gap: 10px; }
+.study-dialog .row-gap > input.field { flex: 1; min-width: 0; }
+input[type="range"] { accent-color: var(--red); }

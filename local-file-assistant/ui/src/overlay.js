@@ -289,7 +289,10 @@ pin.addEventListener('click', () => {
   window.lfa.pinOverlay(on);
 });
 
-window.lfa.onOverlayShown(reset);
+window.lfa.onOverlayShown((ctx) => {
+  loadAppearance(); // a theme or option changed in Settings applies the next time the overlay opens
+  reset(ctx);
+});
 
 waitForBackend({ onWaiting: () => (status.textContent = 'STARTING…') }).then((up) => {
   if (up) loadAppearance();
