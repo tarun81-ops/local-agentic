@@ -1,0 +1,28 @@
+# Runs on every push/PR once this folder is a GitHub repo: backend tests + UI build on Windows.
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Backend tests (no Ollama needed)
+        working-directory: backend
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI build
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build:web

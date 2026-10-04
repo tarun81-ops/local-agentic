@@ -107,3 +107,8 @@ export function badge(text, tone = 'outline') {
 export function notice(message, tone = 'neutral') {
   return el('div', { class: `notice notice-${tone}`, role: tone === 'error' ? 'alert' : 'status' }, message);
 }
+
+/** Three pulsing dots — "still working" filler for a short wait (searching, thinking). */
+export function dots() {
+  return el('span', { class: 'dots', 'aria-hidden': 'true' }, el('span', { class: 'dot' }), el('span', { class: 'dot' }), el('span', { class: 'dot' }));
+}

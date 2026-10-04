@@ -1,6 +1,7 @@
 import httpx
 
 from app.config import settings
+from app.core import personalize
 from app.db.vector_store import search as _table_search
 
 
@@ -19,7 +20,7 @@ def embed(texts: list[str], timeout: float = 120) -> list[list[float]]:
             if settings.llm_provider == "ollama":
                 response = client.post(
                     f"{settings.ollama_url}/api/embed",
-                    json={"model": settings.embedding_model, "input": batch, "keep_alive": settings.embed_keep_alive},
+                    json={"model": settings.embedding_model, "input": batch, "keep_alive": personalize.effective("embed_keep_alive")},
                 )
                 response.raise_for_status()
                 vectors.extend(response.json()["embeddings"])

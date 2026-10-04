@@ -5,10 +5,12 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import routes_chat, routes_files, routes_organize, routes_search, routes_settings
+from app.api import routes_actions, routes_chat, routes_collections, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_personalize, routes_proactive, routes_search, routes_settings, routes_study, routes_tasks, routes_voice
 from app.config import settings
+from app.core.assistant import memory_extract, scheduler
 from app.core.llm import idle
 from app.core.watcher import watcher
+from app.db import assistant_db
 from app.security import make_guard, resolve_token
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -33,13 +35,18 @@ _setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    assistant_db.migrate()
     watcher.start()
     idle.start()
+    memory_extract.start()
+    scheduler.start()
     if settings.auto_rescan:
         pending = routes_files.rescan_unscanned()
         if pending:
             logging.getLogger(__name__).info("rebuilding the index for %d folder(s)", len(pending))
     yield
+    scheduler.stop()
+    memory_extract.stop()
     idle.stop()
     watcher.stop()
 
@@ -52,7 +59,7 @@ app.middleware("http")(make_guard(resolve_token(settings.data_dir), settings.ori
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origin_list,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -62,5 +69,5 @@ def health():
     return {"ok": True}
 
 
-for module in (routes_search, routes_chat, routes_files, routes_organize, routes_settings):
+for module in (routes_search, routes_actions, routes_chat, routes_collections, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_personalize, routes_proactive, routes_settings, routes_study, routes_tasks, routes_voice):
     app.include_router(module.router)

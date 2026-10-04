@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,7 +71,7 @@ def test_index_search_organize_undo_flow(client, corpus, monkeypatch):
         lambda candidates, model: [{"path": str(corpus.resolve() / "meeting_notes.docx"), "folder": "Meeting Notes"}],
     )
     plan = client.post("/organize/plan", json={"root": str(corpus.resolve())}, headers=AUTH).json()
-    ops = {(a["op"], a["path"].rsplit("/", 1)[-1]) for a in plan["actions"]}
+    ops = {(a["op"], Path(a["path"]).name) for a in plan["actions"]}  # paths use the OS separator
     assert ("move", "meeting_notes.docx") in ops
     assert any(op == "delete" for op, _ in ops)
 
@@ -123,7 +124,7 @@ def test_chat_reports_a_search_failure_instead_of_hanging(client, monkeypatch):
         raise RuntimeError("database is locked")
 
     monkeypatch.setattr(routes_chat, "hybrid_search", locked)
-    events = _events(client.post("/chat", json={"question": "x"}, headers=AUTH).text)
+    events = _events(client.post("/chat", json={"message": "x"}, headers=AUTH).text)
     assert [kind for kind, _ in events] == ["error"] and "database is locked" in events[0][1]["detail"]
 
 
@@ -134,14 +135,14 @@ def test_chat_streams_results_tokens_then_a_checked_done(client, monkeypatch):
              "snippet": "total $4,250", "text": "The invoice total for Acme Corp is $4,250."}
     monkeypatch.setattr(routes_chat, "hybrid_search", lambda q, root=None, limit=6: {"results": [chunk], "semantic": True})
 
-    def answer(question, chunks, model=None):
+    def answer(question, chunks, history=None, model=None, style=""):
         yield "Acme Corp owes $4,250 "
         yield "(invoice.pdf, page 1)."
         return True  # the model hit its token cap
 
     monkeypatch.setattr(routes_chat, "answer_stream", answer)
-    events = _events(client.post("/chat", json={"question": "total?"}, headers=AUTH).text)
+    events = _events(client.post("/chat", json={"message": "total?", "mode": "files"}, headers=AUTH).text)
     kinds = [kind for kind, _ in events]
-    assert kinds[0] == "results" and kinds.count("token") == 2 and kinds[-1] == "done"
+    assert kinds[:2] == ["route", "results"] and kinds.count("token") == 2 and kinds[-1] == "done"
     done = events[-1][1]
     assert done["all_verified"] and done["truncated"] and done["citations"][0]["status"] == "checked"

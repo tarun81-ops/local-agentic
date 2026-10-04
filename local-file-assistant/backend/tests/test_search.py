@@ -57,3 +57,46 @@ def test_apostrophe_in_path_does_not_break_vector_upsert(tmp_path, db_paths):
     indexer.index_folder(folder, db, vdb)
     rows = vector_store.open_table(vector_store.connect(vdb)).to_arrow().to_pylist()
     assert len([r for r in rows if r["path"] == str(target.resolve())]) == 1
+
+
+def test_reranker_reorders_hybrid_results_and_failures_fall_back(corpus, db_paths, monkeypatch):
+    from app.core.search import hybrid, reranker
+
+    db, vdb = db_paths
+    indexer.index_folder(corpus, db, vdb)
+    monkeypatch.setattr(hybrid.settings, "db_path", db)
+    monkeypatch.setattr(hybrid.settings, "vector_db_dir", vdb)
+    q = "What is the invoice total for Acme Corp?"
+
+    plain = hybrid.hybrid_search(q, limit=3)
+    assert not plain["reranked"] and plain["results"][0]["name"] == "invoice_notes.pdf"
+
+    # A stand-in cross-encoder that prefers the meeting notes: re-ranking must follow it.
+    monkeypatch.setattr(reranker, "available", lambda: True)
+    monkeypatch.setattr(reranker, "scores", lambda query, passages, name=None: [float("meeting_notes" in p) for p in passages])
+    out = hybrid.hybrid_search(q, limit=3)
+    assert out["reranked"] and out["results"][0]["name"] == "meeting_notes.docx"
+
+    def broken(*a, **k):
+        raise RuntimeError("corrupt model file")
+
+    monkeypatch.setattr(reranker, "scores", broken)
+    out = hybrid.hybrid_search(q, limit=3)
+    assert not out["reranked"] and out["results"][0]["name"] == "invoice_notes.pdf"
+
+
+def test_reranker_is_off_without_a_model_and_reads_the_file_name(tmp_path, monkeypatch):
+    from app.core.search import reranker
+
+    monkeypatch.setattr(reranker.settings, "models_dir", tmp_path)
+    monkeypatch.setattr(reranker.settings, "rerank_model", "")
+    assert not reranker.available()
+    monkeypatch.setattr(reranker.settings, "rerank_model", "org/model")
+    assert not reranker.available()  # configured but never downloaded
+    for f in reranker.REMOTE_FILES:
+        (reranker.model_dir("org/model") / f).parent.mkdir(parents=True, exist_ok=True)
+        (reranker.model_dir("org/model") / f).write_text("x")
+    assert reranker.available()
+    assert reranker.passage({"path": "C:/docs/Insurance/car_policy.pdf", "text": "Motor policy"}).startswith(
+        "File: car_policy.pdf\nFolder: Insurance\n"
+    )

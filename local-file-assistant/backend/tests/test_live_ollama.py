@@ -58,13 +58,13 @@ def test_chat_endpoint_streams_a_verified_answer(corpus, db_paths, monkeypatch):
 
     t0 = time.perf_counter()
     with TestClient(app, base_url="http://127.0.0.1:8756") as client:
-        r = client.post("/chat", json={"question": "What is the invoice total for Acme Corp?"}, headers={"Authorization": "Bearer test-token"})
+        r = client.post("/chat", json={"message": "What is the invoice total for Acme Corp?", "mode": "files"}, headers={"Authorization": "Bearer test-token"})
     events = [
         (block.split("\n")[0].removeprefix("event: "), json.loads(block.split("\n")[1].removeprefix("data: ")))
         for block in r.text.strip().split("\n\n")
     ]
     kinds = [k for k, _ in events]
     print(f"\n/chat took {time.perf_counter() - t0:.1f}s, {kinds.count('token')} tokens")
-    assert kinds[0] == "results" and kinds[-1] == "done" and "token" in kinds
+    assert kinds[:2] == ["route", "results"] and kinds[-1] == "done" and "token" in kinds
     done = events[-1][1]
     assert done["citations"], done["answer"]

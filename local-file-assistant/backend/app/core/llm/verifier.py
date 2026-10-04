@@ -25,6 +25,7 @@ STOPWORDS = {
 }
 
 THRESHOLD = 0.6
+STRICT_THRESHOLD = 0.85  # Settings: "check citations strictly"
 # ponytail: a negation word in the claim but none anywhere in the cited text fails the claim.
 # Catches "the total is not $5,000"; misses negations the source happens to share. An NLI
 # check would do better, at the cost of a second model pass.
@@ -69,7 +70,7 @@ def _uncited(answer: str, claimed: list[tuple[int, int]]) -> list[list[int]]:
     return spans
 
 
-def verify(answer_text: str, chunks: list[dict]) -> dict:
+def verify(answer_text: str, chunks: list[dict], threshold: float = THRESHOLD) -> dict:
     by_loc: dict[tuple[str, str, int], dict] = {}
     for c in chunks:
         key = (_file_name(c["path"]), c["loc_kind"].lower(), int(c["loc_no"]))
@@ -89,7 +90,7 @@ def verify(answer_text: str, chunks: list[dict]) -> dict:
         claim = _claim_before(answer_text, m.start(), floor)
         claimed.append((m.start() - len(claim), m.end()))
         floor = m.end()
-        check = _check(CITATION_RE.sub("", claim), by_loc.get(key))
+        check = _check(CITATION_RE.sub("", claim), by_loc.get(key), threshold)
         citations.append({**base, **check, "verified": check["status"] == "checked"})
     return {
         "citations": citations,
@@ -98,7 +99,7 @@ def verify(answer_text: str, chunks: list[dict]) -> dict:
     }
 
 
-def _check(claim: str, source: dict | None) -> dict:
+def _check(claim: str, source: dict | None, threshold: float = THRESHOLD) -> dict:
     if source is None:
         return {"status": "failed", "reason": "not in retrieved files"}
     out = {"path": source["path"]}
@@ -109,7 +110,7 @@ def _check(claim: str, source: dict | None) -> dict:
     numbers = {_norm_num(x) for x in _NUMBER_RE.findall(source["text"])}
     found = sum(1 for f in facts if (f in numbers if f[:1].isdigit() else f in lower))
     overlap = round(found / len(facts), 2)
-    if overlap < THRESHOLD:
+    if overlap < threshold:
         return {**out, "status": "failed", "overlap": overlap, "reason": "claim not found in source"}
     if _NEGATION_RE.search(claim) and not _NEGATION_RE.search(source["text"]):
         return {**out, "status": "failed", "overlap": overlap, "reason": "claim negates the source"}

@@ -1,11 +1,13 @@
 import { el } from './common.js';
 
 export const NAV_ITEMS = [
-  { id: 'ask', n: '01', label: 'ASK' },
+  { id: 'chat', n: '01', label: 'CHAT' },
   { id: 'search', n: '02', label: 'SEARCH' },
   { id: 'organize', n: '03', label: 'ORGANIZE' },
-  { id: 'index', n: '04', label: 'INDEX' },
-  { id: 'settings', n: '05', label: 'SETTINGS' },
+  { id: 'tasks', n: '04', label: 'TASKS' },
+  { id: 'memory', n: '05', label: 'MEMORY' },
+  { id: 'index', n: '06', label: 'INDEX' },
+  { id: 'settings', n: '07', label: 'SETTINGS' },
 ];
 
 /**
@@ -13,17 +15,21 @@ export const NAV_ITEMS = [
  * @param {string} p.active  current page id
  * @param {(id:string)=>void} p.onSelect
  * @param {()=>void} p.onNewChat
- * @param {Array<{id:string,title:string}>} p.recent  recent chats (shown on the Ask page)
+ * @param {Array<{id:string,title:string}>} p.recent  recent chats (shown on the Chat page)
  * @param {(id:string)=>void} p.onOpenChat
  * @param {{model?:string, connected?:boolean}} p.status
  */
-export function renderSidebar(root, { active, onSelect, onNewChat, recent, onOpenChat, status }) {
+const ROW_HEIGHT = 40;
+
+export function renderSidebar(root, { active, onSelect, onNewChat, recent, onOpenChat, status, collections = [], onOpenCollection }) {
+  const activeIndex = Math.max(0, NAV_ITEMS.findIndex((item) => item.id === active));
   root.replaceChildren(
     el('div', { class: 'brand' }, el('div', { class: 'mark' }, el('div')), el('div', { class: 'brand-name' }, 'LOCAL FILE ASSISTANT')),
-    el('button', { type: 'button', class: `new-chat ${active === 'ask' ? 'new-chat-primary' : ''}`, onclick: onNewChat }, '+ NEW CHAT'),
+    el('button', { type: 'button', class: `new-chat ${active === 'chat' ? 'new-chat-primary' : ''}`, onclick: onNewChat }, '+ NEW CHAT'),
     el(
       'nav',
       { class: 'nav', 'aria-label': 'Main' },
+      el('div', { class: 'nav-indicator', style: `top:${activeIndex * ROW_HEIGHT}px` }),
       NAV_ITEMS.map((item) =>
         el(
           'button',
@@ -38,7 +44,15 @@ export function renderSidebar(root, { active, onSelect, onNewChat, recent, onOpe
         ),
       ),
     ),
-    active === 'ask' && recent.length
+    collections.length
+      ? el(
+          'div',
+          { class: 'recent' },
+          el('div', { class: 'recent-h' }, 'COLLECTIONS'),
+          collections.slice(0, 8).map((c) => el('button', { type: 'button', class: 'recent-item', title: c.query, onclick: () => onOpenCollection?.(c) }, c.name)),
+        )
+      : '',
+    active === 'chat' && recent.length
       ? el(
           'div',
           { class: 'recent' },

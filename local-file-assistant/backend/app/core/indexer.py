@@ -1,13 +1,15 @@
+import fnmatch
 import hashlib
 import logging
 import threading
+import traceback
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from app.core import memory
-from app.core.parsers import PARSERS
+from app.core import personalize, ram
+from app.core.parsers import PARSERS, image_parser
 from app.core.search.vector_search import embed
 from app.db import sqlite_fts, vector_store
 
@@ -28,6 +30,31 @@ def is_indexable(path: Path) -> bool:
     return path.suffix.lower() in PARSERS and not path.name.startswith("~$")  # ~$ = Office lock files
 
 
+def is_allowed(path: Path, root: Path, profile: dict) -> bool:
+    """The folder's own rules: a file-type allowlist (empty = all) and exclusion patterns, matched
+    against the path inside the folder and against each folder or file name on the way.
+    Both the folder scan and the watcher go through here (the watcher via index_file), so they agree."""
+    exts = profile.get("extensions") or []
+    if exts and path.suffix.lower() not in exts:
+        return False
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return True
+    posix = rel.as_posix().lower()
+    for g in profile.get("exclude_globs") or []:
+        g = g.lower().replace("\\", "/")
+        if fnmatch.fnmatch(posix, g) or any(fnmatch.fnmatch(part, g) for part in posix.split("/")):
+            return False
+    return True
+
+
+def _caption_override(profile: dict) -> bool | None:
+    if profile.get("ocr_only"):
+        return False
+    return profile.get("caption_images")
+
+
 def _hash_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -37,7 +64,11 @@ def _hash_file(path: Path) -> str:
 
 
 def _record_error(path: Path, exc: Exception) -> None:
-    log.error("failed to index %s: %s", path, exc, exc_info=not isinstance(exc, RuntimeError))
+    # The traceback goes in as text, not as a live exc_info: a log record that keeps the exception
+    # alive also keeps its frames alive, and a parser that failed half-way can still hold the
+    # file open, which on Windows blocks moving or deleting the file afterwards.
+    trace = "" if isinstance(exc, RuntimeError) else "\n" + "".join(traceback.format_exception(exc)).rstrip()
+    log.error("failed to index %s: %s%s", path, str(exc), trace)
     RECENT_ERRORS.appendleft(
         {
             "path": str(path),
@@ -80,7 +111,7 @@ def embed_text(path: Path, root: Path, text: str) -> str:
     return f"File: {path.name}\nFolder: {folder.as_posix()}\n\n{text}"
 
 
-def _index_one(path: Path, root: Path, run: _Run) -> str:
+def _index_one(path: Path, root: Path, run: _Run, profile: dict | None = None) -> str:
     stat = path.stat()
     # Cheap check first: hashing reads the whole file, which dominates rescans of big folders.
     if sqlite_fts.file_unchanged(run.conn, path, stat.st_size, stat.st_mtime):
@@ -88,14 +119,18 @@ def _index_one(path: Path, root: Path, run: _Run) -> str:
     file_hash = _hash_file(path)
     if sqlite_fts.file_hash_matches(run.conn, path, file_hash):
         return "skipped"
-    chunks = list(enumerate(PARSERS[path.suffix.lower()](path)))
+    token = image_parser.CAPTION_OVERRIDE.set(_caption_override(profile if profile is not None else personalize.folder_profile(root)))
+    try:
+        chunks = list(enumerate(PARSERS[path.suffix.lower()](path)))
+    finally:
+        image_parser.CAPTION_OVERRIDE.reset(token)
 
     vectors = None
-    if chunks and run.embed_ok and memory.is_low():
+    if chunks and run.embed_ok and ram.is_low():
         # Keyword-indexed now; the blank hash below makes the next scan add the vectors.
         if not run.low_memory_noted:
             run.low_memory_noted = True
-            free = memory.status()["free_mb"]
+            free = ram.status()["free_mb"]
             _record_error(path, RuntimeError(f"low memory ({free} MB free): keyword index only for now, vectors added on the next scan"))
     elif chunks and run.embed_ok:
         try:
@@ -155,16 +190,17 @@ def index_folder(
     try:
         sqlite_fts.add_root(run.conn, folder)
         present: set[str] = set()
+        profile = personalize.folder_profile(folder)
         for path in folder.rglob("*"):
             if CANCEL.is_set():
                 cancelled = True
                 break
-            if not is_indexable(path) or not path.is_file():
+            if not is_indexable(path) or not path.is_file() or not is_allowed(path, folder, profile):
                 continue
             present.add(str(path))
             counts["seen"] += 1
             try:
-                status = _index_one(path, folder, run)
+                status = _index_one(path, folder, run, profile)
             except Exception as exc:
                 _record_error(path, exc)
                 status = "failed"
@@ -174,7 +210,8 @@ def index_folder(
                 on_progress(dict(counts))
 
         if not cancelled:
-            # Only a complete walk knows which files are really gone.
+            # Only a complete walk knows which files are really gone (including ones the folder's
+            # rules now exclude: they are simply not in `present`).
             for stale in set(sqlite_fts.indexed_paths(run.conn, folder)) - present:
                 _forget(stale, run)
                 counts["removed"] += 1
@@ -196,7 +233,11 @@ def index_file(path: Path, db_path: Path, vector_db_dir: Path, root: Path | None
             if found is None:
                 return "ignored"
             root = Path(found)
-        return _index_one(path, root, run)
+        profile = personalize.folder_profile(root)
+        if not is_allowed(path, root, profile):
+            _forget(str(path), run)  # it was indexed before the rules excluded it
+            return "ignored"
+        return _index_one(path, root, run, profile)
     except Exception as exc:
         _record_error(path, exc)
         return "failed"

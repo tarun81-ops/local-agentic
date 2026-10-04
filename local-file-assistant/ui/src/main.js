@@ -8,28 +8,58 @@ import './style.css';
 
 import { api, waitForBackend } from './api.js';
 import { el, notice } from './components/common.js';
+import { applyCached, loadAppearance } from './appearance.js';
 import { renderSidebar } from './components/sidebar.js';
-import { loadChats, render as renderAsk } from './pages/ask.js';
+import { render as renderChat } from './pages/chat.js';
 import { render as renderIndex } from './pages/index.js';
+import { render as renderMemory } from './pages/memory.js';
 import { render as renderOrganize } from './pages/organize.js';
 import { render as renderSearch } from './pages/search.js';
 import { render as renderSettings } from './pages/settings.js';
+import { render as renderTasks } from './pages/tasks.js';
 
-const PAGES = { ask: renderAsk, search: renderSearch, organize: renderOrganize, index: renderIndex, settings: renderSettings };
+applyCached();
+
+const PAGES = { chat: renderChat, search: renderSearch, organize: renderOrganize, tasks: renderTasks, memory: renderMemory, index: renderIndex, settings: renderSettings };
 
 const sidebar = document.getElementById('sidebar');
 const content = document.getElementById('content');
-const state = { page: 'ask', chatId: null, status: { connected: false, model: '' }, cleanup: null, ready: false };
+const state = { page: 'chat', chatId: null, prefill: null, collections: [], recent: [], status: { connected: false, model: '' }, cleanup: null, ready: false };
 
 function drawSidebar() {
   renderSidebar(sidebar, {
     active: state.page,
     onSelect: (id) => show(id),
-    onNewChat: () => show('ask', { chatId: null }),
-    recent: loadChats(),
-    onOpenChat: (id) => show('ask', { chatId: id }),
+    onNewChat: () => show('chat', { chatId: null }),
+    recent: state.recent,
+    onOpenChat: (id) => show('chat', { chatId: id }),
     status: state.status,
+    collections: state.collections,
+    onOpenCollection: (c) => show('search', { prefill: { collectionId: c.id } }),
   });
+}
+
+async function refreshCollections() {
+  try {
+    state.collections = (await api.collections()).collections.filter((c) => c.pinned);
+  } catch { /* keep the list we have */ }
+  drawSidebar();
+}
+
+async function refreshRecent() {
+  try {
+    state.recent = (await api.conversations()).conversations;
+  } catch { /* keep the list we have */ }
+  drawSidebar();
+}
+
+// One-time move of the old browser-stored chats into the backend's conversation store.
+async function importOldChats() {
+  try {
+    const old = JSON.parse(localStorage.getItem('lfa.chats') || '[]');
+    if (old.length) await api.importConversations(old);
+    localStorage.removeItem('lfa.chats');
+  } catch { /* try again next launch */ }
 }
 
 async function refreshStatus() {
@@ -42,32 +72,39 @@ async function refreshStatus() {
   drawSidebar();
 }
 
-function show(page, { chatId } = {}) {
-  state.page = PAGES[page] ? page : 'ask';
+function show(page, { chatId, prefill } = {}) {
+  state.page = PAGES[page] ? page : 'chat';
   if (!state.ready) return; // boot() shows the requested page once the backend is up
   state.cleanup?.();
-  if (state.page === 'ask') state.chatId = chatId ?? null;
+  if (state.page === 'chat') state.chatId = chatId ?? null;
+  state.prefill = prefill ?? null;
   drawSidebar();
   content.dataset.page = state.page;
   state.cleanup =
     PAGES[state.page](content, {
       chatId: state.chatId,
+      prefill: state.prefill,
+      onCollectionsChanged: refreshCollections,
       navigate: show,
-      onChatsChanged: drawSidebar,
+      onChatsChanged: refreshRecent,
       onStatusChanged: refreshStatus,
     }) || null;
 }
 
 async function boot() {
   drawSidebar();
-  content.replaceChildren(el('div', { class: 'boot' }, el('div', { class: 'mark mark-lg' }, el('div')), 'STARTING THE LOCAL BACKEND…'));
+  content.replaceChildren(el('div', { class: 'boot' }, el('div', { class: 'mark mark-lg' }, el('div')), 'STARTING THE LOCAL BACKEND… THE FIRST START CAN TAKE A MINUTE'));
   const up = await waitForBackend();
   if (!up) {
     content.replaceChildren(notice('The local backend didn’t start. Run scripts\\setup.ps1 once, then restart the app.', 'error'));
     return;
   }
+  loadAppearance();
+  await importOldChats();
   state.ready = true;
   show(state.page);
+  refreshRecent();
+  refreshCollections();
   refreshStatus();
   setInterval(refreshStatus, 30000);
 }

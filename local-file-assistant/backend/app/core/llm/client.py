@@ -1,13 +1,10 @@
 import json
-import threading
 
 import httpx
 from openai import OpenAI
 
 from app.config import settings
-
-_SETTINGS_FILE = "settings.json"
-_lock = threading.Lock()
+from app.core import prefs
 
 
 def get_client() -> OpenAI:
@@ -23,23 +20,29 @@ def get_client() -> OpenAI:
 
 def current_model() -> str:
     """The model picked in Settings (saved in the data dir), else OLLAMA_MODEL."""
-    path = settings.data_dir / _SETTINGS_FILE
-    try:
-        return json.loads(path.read_text(encoding="utf-8")).get("model") or settings.ollama_model
-    except (OSError, ValueError):
-        return settings.ollama_model
+    return prefs.get("model") or settings.ollama_model
 
 
 def set_model(name: str) -> None:
-    with _lock:
-        settings.data_dir.mkdir(parents=True, exist_ok=True)
-        path = settings.data_dir / _SETTINGS_FILE
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
-        data["model"] = name
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    prefs.set("model", name)
+
+
+def llm_json(prompt: str, max_tokens: int = 300) -> dict:
+    """One non-streamed call that must answer with a JSON object; {} if it doesn't."""
+    from app.core.llm import idle
+
+    idle.touch()
+    r = get_client().chat.completions.create(
+        model=current_model(),
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+    try:
+        data = json.loads(r.choices[0].message.content or "{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def ollama_status() -> dict:

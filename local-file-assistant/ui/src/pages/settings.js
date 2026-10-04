@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { applyAppearance } from '../appearance.js';
 import { el, notice } from '../components/common.js';
 
 function kv(label, ...value) {
@@ -14,6 +15,15 @@ export function render(container, { onStatusChanged }) {
   const flash = el('div');
   const toggle = el('input', { type: 'checkbox', id: 'launch-at-startup', class: 'toggle', role: 'switch' });
   const shortcut = el('span', { class: 'keys' });
+  const shortcutInput = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Alt+Space', 'aria-label': 'New shortcut' });
+  const shortcutSet = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
+  const meBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const perfBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const lookBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const inboxBox = el('div', { class: 'box box-pad stack' });
+  const proBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const voiceBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const learnBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
 
   container.replaceChildren(
     el('header', { class: 'page-head' }, el('h1', { class: 'page-title' }, 'SETTINGS')),
@@ -21,6 +31,7 @@ export function render(container, { onStatusChanged }) {
       'div',
       { class: 'page-body sections' },
       flash,
+      el('section', {}, sectionHead('00', 'ABOUT ME & ANSWERS'), meBox),
       el('section', {}, sectionHead('01', 'MODEL & BACKEND'), model),
       el(
         'div',
@@ -32,7 +43,7 @@ export function render(container, { onStatusChanged }) {
           el(
             'div',
             { class: 'box box-pad stack' },
-            el('div', { class: 'kv kv-plain' }, el('div', {}, 'SUMMON OVERLAY'), shortcut),
+            el('div', { class: 'kv kv-plain' }, el('div', {}, 'SUMMON OVERLAY'), el('div', { class: 'row-gap' }, shortcut, shortcutInput, shortcutSet)),
             el('div', { class: 'kv kv-plain' }, el('label', { for: 'launch-at-startup' }, 'LAUNCH AT STARTUP'), toggle),
           ),
         ),
@@ -48,18 +59,309 @@ export function render(container, { onStatusChanged }) {
           ),
         ),
       ),
+      el('section', {}, sectionHead('04', 'PROACTIVE SUGGESTIONS'), proBox, inboxBox),
+      el('section', {}, sectionHead('05', 'VOICE'), voiceBox),
+      el('section', {}, sectionHead('06', 'LEARNING FROM USE'), learnBox),
+      el('section', {}, sectionHead('07', 'APPEARANCE'), lookBox),
+      el('section', {}, sectionHead('08', 'PERFORMANCE'), perfBox),
     ),
   );
 
-  window.lfa.shortcut().then((keys) =>
-    shortcut.replaceChildren(...keys.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.toUpperCase())])),
-  );
+  const showKeys = (keys) => shortcut.replaceChildren(...keys.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.toUpperCase())]));
+  window.lfa.shortcut().then(showKeys);
+  shortcutSet.addEventListener('click', async () => {
+    const r = await window.lfa.setShortcut(shortcutInput.value);
+    if (r.ok) {
+      showKeys(r.shortcut);
+      shortcutInput.value = '';
+      flash.replaceChildren();
+    } else flash.replaceChildren(notice(r.error, 'error'));
+  });
   window.lfa.getLaunchAtStartup().then(({ enabled, supported }) => {
     toggle.checked = enabled;
     toggle.disabled = !supported;
     if (!supported) toggle.title = 'Available in the installed app';
   });
   toggle.addEventListener('change', () => window.lfa.setLaunchAtStartup(toggle.checked));
+
+  // Morning briefing and nudges: each can be switched off, with quiet hours and a daily limit.
+  async function loadProactive() {
+    try {
+      const c = await api.proactiveSettings();
+      const field = (id, label, key, attrs, value) => {
+        const input = el('input', { id, ...attrs });
+        if (attrs.type === 'checkbox') input.checked = value;
+        else input.value = value;
+        input.dataset.key = key;
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const sw = { type: 'checkbox', class: 'toggle', role: 'switch' };
+      const time = { type: 'time', class: 'shortcut-input' };
+      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SAVE');
+      const preview = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'PREVIEW TODAY’S BRIEFING');
+      const out = el('div');
+      const rows = [
+        field('p-briefing', 'MORNING BRIEFING', 'briefing', sw, c.briefing),
+        field('p-btime', 'BRIEFING TIME', 'briefing_time', time, c.briefing_time),
+        field('p-overdue', 'EVENING NUDGE FOR OVERDUE TASKS', 'overdue', sw, c.overdue),
+        field('p-qs', 'QUIET HOURS FROM', 'quiet_start', time, c.quiet_start),
+        field('p-qe', 'QUIET HOURS UNTIL', 'quiet_end', time, c.quiet_end),
+        field('p-cap', 'MOST SUGGESTIONS PER DAY', 'daily_cap', { type: 'number', min: 0, max: 10, class: 'shortcut-input' }, c.daily_cap),
+        field('p-model', 'LET THE LOCAL MODEL REWORD THE BRIEFING (USES MORE RAM)', 'use_model', sw, c.use_model),
+      ];
+      proBox.replaceChildren(...rows, el('div', { class: 'row-gap' }, save, preview), out);
+      save.addEventListener('click', async () => {
+        const body = {};
+        for (const input of proBox.querySelectorAll('input[data-key]')) {
+          body[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+        }
+        try {
+          await api.saveProactive(body);
+          out.replaceChildren(notice('Saved.'));
+        } catch (e) {
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+      preview.addEventListener('click', async () => {
+        try {
+          const p = await api.proactivePreview();
+          out.replaceChildren(notice(p.empty ? 'Nothing to report today: no tasks, events or changed files.' : p.text));
+        } catch (e) {
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+    } catch (e) {
+      proBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  // Voice: the speech models are downloaded once (a few hundred MB); everything then runs on this PC.
+  async function loadVoice(errors = {}) {
+    try {
+      const [s, keys] = await Promise.all([api.voiceStatus(), window.lfa.shortcuts()]);
+      const ready = (ok) => (ok ? 'READY' : 'NOT DOWNLOADED');
+      const input = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Shift+Alt+V', 'aria-label': 'New voice shortcut' });
+      const set = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
+      const keyCaps = (text) => el('span', { class: 'keys' }, ...text.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.toUpperCase())]));
+      const download = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'DOWNLOAD VOICE MODELS');
+      download.disabled = s.stt.available && s.tts.available;
+      const out = el('div', {}, ...Object.entries(errors).map(([k, v]) => notice(`${k === 'stt' ? 'Speech recognition' : 'Voice'}: ${v}`, 'error')));
+      voiceBox.replaceChildren(
+        el('div', { class: 'kv kv-plain' }, el('div', {}, `SPEECH RECOGNITION (${s.stt.model})`), el('div', {}, ready(s.stt.available))),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, `SPOKEN ANSWERS (${s.tts.voice})`), el('div', {}, ready(s.tts.available))),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, 'TALK TO THE ASSISTANT'), el('div', { class: 'row-gap' }, keyCaps(keys.voice), input, set)),
+        el('div', { class: 'row-gap' }, download),
+        out,
+      );
+      set.addEventListener('click', async () => {
+        const r = await window.lfa.setShortcut(input.value, 'voice');
+        if (r.ok) loadVoice();
+        else out.replaceChildren(notice(r.error, 'error'));
+      });
+      download.addEventListener('click', async () => {
+        download.disabled = true;
+        out.replaceChildren(notice('Downloading… this can take a few minutes. Keep the app open.'));
+        try {
+          loadVoice((await api.downloadVoice()).errors);
+        } catch (e) {
+          download.disabled = false;
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+    } catch (e) {
+      voiceBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  // Learning from use: files you open for a search rise slightly in similar searches, and answers you
+  // mark not helpful can be exported as test questions. Everything stays on this PC and can be wiped.
+  async function loadLearning() {
+    try {
+      const s = await api.learningStats();
+      const exportBtn = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'EXPORT NOT-HELPFUL QUESTIONS');
+      const wipeBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'FORGET WHAT I OPEN AND RATE');
+      exportBtn.disabled = s.not_helpful === 0;
+      const out = el('div');
+      learnBox.replaceChildren(
+        el('div', { class: 'kv kv-plain' }, el('div', {}, 'FILE OPENS REMEMBERED'), el('div', {}, String(s.opens))),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, 'ANSWERS MARKED HELPFUL / NOT HELPFUL'), el('div', {}, `${s.helpful} / ${s.not_helpful}`)),
+        el('div', { class: 'row-gap' }, exportBtn, wipeBtn),
+        out,
+      );
+      exportBtn.addEventListener('click', async () => {
+        try {
+          const a = el('a', { href: URL.createObjectURL(new Blob([await api.exportLearning()], { type: 'application/x-ndjson' })), download: 'not-helpful-questions.jsonl' });
+          a.click();
+          URL.revokeObjectURL(a.href);
+          out.replaceChildren(notice('Saved. Append the lines to backend/eval/questions.jsonl and fill in expect and file for the ones you want measured.'));
+        } catch (e) {
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+      wipeBtn.addEventListener('click', async () => {
+        if (!confirm('Forget which files you opened and which answers you rated? Search ranking returns to its defaults.')) return;
+        try {
+          await api.wipeLearning();
+          loadLearning();
+        } catch (e) {
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+    } catch (e) {
+      learnBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  // Personalization: what the assistant knows about you and how it answers. Everything is optional and stays on this PC.
+  async function loadMe() {
+    try {
+      const c = await api.personalize();
+      const profile = el('textarea', { id: 'pz-profile', class: 'field', rows: 4, maxlength: 800, placeholder: 'e.g. First-year ETE student in Raipur. Working on a robotics project. I like short answers with examples.' });
+      profile.value = c.profile;
+      const count = el('div', { class: 'quiet' }, `${c.profile.length} / 800`);
+      profile.addEventListener('input', () => (count.textContent = `${profile.value.length} / 800`));
+      const select = (id, label, key, options, value) => {
+        const input = el('select', { id, class: 'field field-mono' }, ...options.map(([v, t]) => el('option', { value: v, selected: v === value }, t)));
+        input.dataset.key = key;
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const sw = (id, label, key, value) => {
+        const input = el('input', { id, type: 'checkbox', class: 'toggle', role: 'switch' });
+        input.checked = value;
+        input.dataset.key = key;
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SAVE');
+      const out = el('div');
+      meBox.replaceChildren(
+        el('label', { for: 'pz-profile' }, 'ABOUT ME (SHARED WITH THE LOCAL MODEL ON EVERY QUESTION; NEVER LEAVES THIS PC)'),
+        profile,
+        count,
+        select('pz-style', 'ANSWER STYLE', 'answer_style', [['concise', 'CONCISE'], ['detailed', 'DETAILED'], ['study', 'STUDY'], ['simple', 'SIMPLE']], c.answer_style),
+        select('pz-lang', 'LANGUAGE', 'language', [['auto', 'MATCH WHAT I WRITE'], ['english', 'ENGLISH'], ['hinglish', 'HINGLISH']], c.language),
+        sw('pz-cite', 'ALWAYS CITE PAGE NUMBERS', 'cite_pages', c.cite_pages),
+        select('pz-strict', 'CITATION CHECKING', 'verifier_strict', [['normal', 'NORMAL'], ['strict', 'STRICT (FLAGS MORE CLAIMS)']], c.verifier_strict),
+        sw('pz-review', 'ASK ME BEFORE SAVING WHAT I LEARN FROM CHATS', 'memory_review', c.memory_review),
+        el('div', { class: 'row-gap' }, save),
+        out,
+      );
+      save.addEventListener('click', async () => {
+        const body = { profile: profile.value };
+        for (const input of meBox.querySelectorAll('[data-key]')) body[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
+        try {
+          await api.savePersonalize(body);
+          out.replaceChildren(notice('Saved.'));
+        } catch (e) {
+          out.replaceChildren(notice(e.message, 'error'));
+        }
+      });
+    } catch (e) {
+      meBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  // Appearance: every change applies at once and is saved. The overlay picks up its options next time it opens.
+  async function loadLook() {
+    try {
+      let current = (await api.personalize()).appearance;
+      const out = el('div');
+      const change = (patch) => {
+        current = applyAppearance({ ...current, ...patch });
+        api.savePersonalize({ appearance: patch }).then(() => out.replaceChildren(), (e) => out.replaceChildren(notice(e.message, 'error')));
+      };
+      const select = (id, label, key, options) => {
+        const input = el('select', { id, class: 'field field-mono' }, ...options.map(([v, t]) => el('option', { value: v, selected: v === current[key] }, t)));
+        input.addEventListener('change', () => change({ [key]: input.value }));
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const size = el('input', { id: 'lk-size', type: 'range', min: 0.9, max: 1.3, step: 0.05, value: current.font_scale, 'aria-label': 'Text size' });
+      const sizeNote = el('span', { class: 'quiet' }, `${Math.round(current.font_scale * 100)}%`);
+      size.addEventListener('input', () => {
+        sizeNote.textContent = `${Math.round(size.value * 100)}%`;
+        change({ font_scale: Number(size.value) });
+      });
+      const compact = el('input', { id: 'lk-compact', type: 'checkbox', class: 'toggle', role: 'switch' });
+      compact.checked = current.overlay_compact;
+      compact.addEventListener('change', () => change({ overlay_compact: compact.checked }));
+      lookBox.replaceChildren(
+        select('lk-theme', 'THEME', 'theme', [['system', 'FOLLOW WINDOWS'], ['light', 'LIGHT'], ['dark', 'DARK']]),
+        select('lk-accent', 'ACCENT COLOUR', 'accent', [['red', 'RED'], ['blue', 'BLUE'], ['green', 'GREEN'], ['violet', 'VIOLET']]),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-size' }, 'TEXT SIZE'), el('div', { class: 'row-gap' }, size, sizeNote)),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-compact' }, 'COMPACT OVERLAY (SMALLER, FEWER RESULTS)'), compact),
+        select('lk-pos', 'OVERLAY POSITION', 'overlay_position', [['top-right', 'TOP RIGHT'], ['center', 'CENTRE'], ['cursor', 'NEAR THE CURSOR']]),
+        el(
+          'div',
+          { class: 'look-preview', 'aria-label': 'Preview' },
+          el('span', { class: 'btn btn-primary btn-sm' }, 'PRIMARY'),
+          el('span', { class: 'btn btn-outline btn-sm' }, 'OUTLINE'),
+          el('span', { class: 'link-btn' }, 'LINK'),
+          el('span', { class: 'badge badge-red' }, 'ACCENT'),
+          el('span', { class: 'badge badge-blue' }, 'LOCAL'),
+        ),
+        out,
+      );
+    } catch (e) {
+      lookBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  // Performance: a profile trades speed for battery and RAM. Changes apply to the next request, no restart.
+  const PROFILE_NAMES = { battery: 'BATTERY SAVER', balanced: 'BALANCED', plugged: 'PLUGGED IN', auto: 'AUTO (BATTERY OR PLUGGED IN)' };
+  async function loadPerf() {
+    try {
+      const [cfg, st] = await Promise.all([api.personalize(), api.performance()]);
+      const out = el('div');
+      const save = (patch) => api.savePersonalize(patch).then(() => { out.replaceChildren(notice('Saved.')); loadPerf(); }, (e) => out.replaceChildren(notice(e.message, 'error')));
+      const profile = el('select', { id: 'pf-profile', class: 'field field-mono' }, ...Object.entries(PROFILE_NAMES).map(([v, t]) => el('option', { value: v, selected: v === cfg.perf_profile }, t)));
+      profile.addEventListener('change', () => save({ perf_profile: profile.value }));
+      const number = (id, label, key, value, attrs) => {
+        const input = el('input', { id, type: 'number', class: 'shortcut-input', placeholder: 'follow profile', ...attrs });
+        input.value = value ?? '';
+        input.addEventListener('change', () => save({ [key]: input.value === '' ? null : Number(input.value) }));
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const gb = (mb) => (mb == null ? 'UNKNOWN' : `${(mb / 1024).toFixed(1)} GB`);
+      const unload = st.values.llm_idle_unload_s;
+      const power = st.power === 'battery' ? 'ON BATTERY' : st.power === 'plugged' ? 'PLUGGED IN' : 'NO BATTERY REPORTED';
+      perfBox.replaceChildren(
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'pf-profile' }, 'PROFILE'), profile),
+        el('div', { class: 'quiet' }, `IN FORCE NOW: ${PROFILE_NAMES[st.active]} · ${power} · FREE RAM ${gb(st.free_mb)}`),
+        el('div', { class: 'quiet' }, `Model unloads after ${unload > 0 ? `${Math.round(unload / 60)} min` : 'never'} · chat remembers ${st.values.history_turns} turns · image captions ${st.values.caption_images ? 'on' : 'off'} · embedder idle ${st.values.embed_keep_alive}`),
+        st.note ? notice(st.note) : '',
+        number('pf-unload', 'UNLOAD THE MODEL AFTER (MINUTES, 0 = NEVER)', 'perf_unload_minutes', cfg.perf_unload_minutes, { min: 0, max: 240 }),
+        number('pf-ram', 'STOP INDEXING WHEN FREE RAM IS BELOW (MB)', 'perf_min_free_ram_mb', cfg.perf_min_free_ram_mb, { min: 0, max: 8192 }),
+        el('div', { class: 'mem-group' }, 'WHAT EACH PROFILE CHANGES'),
+        ...Object.entries(st.words).map(([k, text]) => el('div', { class: 'quiet' }, `${PROFILE_NAMES[k]} — ${text}`)),
+        out,
+      );
+    } catch (e) {
+      perfBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  // New-file nudge: opt-in. With no folders listed it never looks at anything; it only counts new files by name and never moves one.
+  async function loadInbox() {
+    try {
+      const { inbox_folders: folders } = await api.personalize();
+      const out = el('div');
+      const save = (next) => api.savePersonalize({ inbox_folders: next }).then(loadInbox, (e) => out.replaceChildren(notice(e.message, 'error')));
+      const add = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, '+ ADD A FOLDER');
+      add.addEventListener('click', async () => {
+        const picked = await window.lfa.pickFolder();
+        if (picked) save([...folders, picked]);
+      });
+      inboxBox.replaceChildren(
+        el('div', { class: 'mem-group' }, 'NEW-FILE NUDGE (OFF UNTIL YOU ADD A FOLDER)'),
+        el('div', { class: 'quiet' }, 'When new files appear in these folders (say Downloads), I can tell you once a day and offer to open Organize. I only read file names. Nothing is moved unless you approve a plan.'),
+        ...folders.map((f) => el('div', { class: 'kv kv-plain' }, el('div', { class: 'folder-path' }, f), el('button', { type: 'button', class: 'link-btn', 'aria-label': `Stop watching ${f}`, onclick: () => save(folders.filter((x) => x !== f)) }, 'REMOVE'))),
+        el('div', { class: 'row-gap' }, add),
+        out,
+      );
+    } catch (e) {
+      inboxBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  loadInbox();
+  loadPerf();
+  loadLook();
+  loadMe();
+  loadLearning();
+  loadVoice();
+  loadProactive();
 
   async function load() {
     try {

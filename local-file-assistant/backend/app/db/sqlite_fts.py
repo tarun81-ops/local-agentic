@@ -140,6 +140,31 @@ def is_indexed(conn: sqlite3.Connection, path: Path | str) -> bool:
     return conn.execute("SELECT 1 FROM files WHERE path = ?", (str(path),)).fetchone() is not None
 
 
+def file_chunks(conn: sqlite3.Connection, path: Path | str, budget: int = 6000) -> tuple[list[dict], bool]:
+    """A file's chunks in reading order, as [{loc_kind, loc_no, text}], within `budget` characters.
+    Over budget it takes chunks spread evenly across the file (not just the start) and returns
+    sampled=True, so a small model still sees the whole document's range."""
+    row = conn.execute("SELECT rowid FROM files WHERE path = ?", (str(path),)).fetchone()
+    if row is None:
+        return [], False
+    first, last = _chunk_rowids(row[0])
+    sizes = conn.execute("SELECT rowid, length(text) FROM chunks WHERE rowid BETWEEN ? AND ? ORDER BY rowid", (first, last)).fetchall()
+    total = sum(s[1] for s in sizes)
+    sampled = total > budget
+    if sampled:
+        per = max(1, budget // max(1, total // len(sizes)))  # how many average-sized chunks fit
+        sizes = [sizes[int(i * len(sizes) / per)] for i in range(min(per, len(sizes)))]
+    out, used = [], 0
+    for rowid, size in sizes:
+        r = conn.execute("SELECT loc_kind, loc_no, text FROM chunks WHERE rowid = ?", (rowid,)).fetchone()
+        text = r[2][: max(0, budget - used)]
+        if not text:
+            break
+        used += len(text)
+        out.append({"loc_kind": r[0], "loc_no": int(r[1]), "text": text})
+    return out, sampled
+
+
 def first_texts(conn: sqlite3.Connection, root: str, chars: int = 200) -> dict[str, str]:
     """The start of each file's text in a folder, in one query (files with no text are absent)."""
     rows = conn.execute(
@@ -157,6 +182,12 @@ def list_files(conn: sqlite3.Connection, root: str | None = None, limit: int = 5
         args = (root,)
     sql += " ORDER BY path LIMIT ?"
     return [dict(r) for r in conn.execute(sql, (*args, limit))]
+
+
+def recent_files(conn: sqlite3.Connection, since: float, limit: int = 20) -> list[dict]:
+    """Indexed files modified since `since` (epoch seconds), newest first."""
+    rows = conn.execute("SELECT path, mtime FROM files WHERE mtime >= ? ORDER BY mtime DESC LIMIT ?", (since, limit))
+    return [dict(r) for r in rows]
 
 
 # ---- roots ------------------------------------------------------------------------

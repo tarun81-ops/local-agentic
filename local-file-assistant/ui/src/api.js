@@ -42,7 +42,7 @@ export async function request(path, { method = 'GET', body, query } = {}) {
 }
 
 /** Resolves once the backend answers /health (it takes a few seconds to start). */
-export async function waitForBackend({ timeoutMs = 60000, onWaiting } = {}) {
+export async function waitForBackend({ timeoutMs = 120000, onWaiting } = {}) { // the first start after an install can take a minute
   const started = Date.now();
   for (;;) {
     try {
@@ -55,15 +55,15 @@ export async function waitForBackend({ timeoutMs = 60000, onWaiting } = {}) {
   }
 }
 
-/** POST /chat and dispatch its server-sent events: results, token, done, error. */
-export async function chat({ question, root }, handlers, signal) {
+/** POST /chat and dispatch its server-sent events: route, results, token, conversation, done, error. */
+export async function chat({ message, conversationId, mode, root, context, style, language }, handlers, signal) {
   const { token } = await config();
   let response;
   try {
     response = await fetch((await base()) + '/chat', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, root: root || null }),
+      body: JSON.stringify({ message, conversation_id: conversationId ?? null, mode: mode || 'auto', root: root || null, context: context || null, style: style || null, language: language || null }),
       signal,
     });
   } catch (err) {
@@ -103,14 +103,90 @@ export const api = {
   settings: () => request('/settings'),
   setModel: (model) => request('/settings/model', { method: 'PUT', body: { model } }),
   roots: () => request('/files/roots'),
+  files: (root) => request('/files', { query: { root } }),
   addRoot: (folder) => request('/files/roots', { method: 'POST', body: { folder } }),
   removeRoot: (folder) => request('/files/roots/remove', { method: 'POST', body: { folder } }),
   rescan: (folder) => request('/files/index', { method: 'POST', body: { folder } }),
+  saveFolderProfile: (folder, profile) => request('/files/roots/profile', { method: 'PUT', body: { folder, profile } }),
+  collections: () => request('/collections'),
+  createCollection: (body) => request('/collections', { method: 'POST', body }),
+  updateCollection: (id, patch) => request(`/collections/${id}`, { method: 'PATCH', body: patch }),
+  deleteCollection: (id) => request(`/collections/${id}`, { method: 'DELETE' }),
+  recentFiles: () => request('/files/recent'),
   indexStatus: () => request('/files/index/status'),
   cancelIndex: () => request('/files/index/cancel', { method: 'POST' }),
-  open: (path) => request('/files/open', { method: 'POST', body: { path } }),
+  // query: the search that led here (optional); the backend learns which files you open for which searches
+  open: (path, query) => request('/files/open', { method: 'POST', body: { path, query: query || '' } }),
   plan: (root) => request('/organize/plan', { method: 'POST', body: { root } }),
   apply: (actions) => request('/organize/apply', { method: 'POST', body: { actions } }),
   undo: (batch) => request('/organize/undo', { method: 'POST', body: { batch: batch || null } }),
   history: () => request('/organize/history'),
+  memories: (q, status) => request('/memory', { query: { q, status } }),
+  approveMemory: (id) => request(`/memory/${id}/approve`, { method: 'POST' }),
+  approveAllMemories: () => request('/memory/approve-all', { method: 'POST' }),
+  personalize: () => request('/personalize'),
+  performance: () => request('/personalize/performance'),
+  savePersonalize: (patch) => request('/personalize', { method: 'PUT', body: patch }),
+  addMemory: (text) => request('/memory', { method: 'POST', body: { text } }),
+  updateMemory: (id, patch) => request(`/memory/${id}`, { method: 'PATCH', body: patch }),
+  deleteMemory: (id) => request(`/memory/${id}`, { method: 'DELETE' }),
+  wipeMemory: () => request('/memory/wipe', { method: 'POST' }),
+  exportMemory: () => request('/memory/export'),
+  tasks: (status) => request('/tasks', { query: { status } }),
+  parseTask: (text, kind) => request('/tasks/parse', { method: 'POST', body: { text, kind } }),
+  createTask: (body) => request('/tasks', { method: 'POST', body }),
+  completeTask: (id) => request(`/tasks/${id}/complete`, { method: 'POST' }),
+  snoozeTask: (id, minutes) => request(`/tasks/${id}/snooze`, { method: 'POST', body: { minutes } }),
+  deleteTask: (id) => request(`/tasks/${id}`, { method: 'DELETE' }),
+  events: (start, end) => request('/events', { query: { start, end } }),
+  createEvent: (body) => request('/events', { method: 'POST', body }),
+  importIcs: (text) => request('/tasks/ics', { method: 'POST', body: { text } }),
+  exportIcs: async () => {
+    const { token } = await config();
+    const r = await fetch((await base()) + '/tasks/ics', { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new ApiError(r.status, 'Export failed');
+    return r.text();
+  },
+  approveAction: (id) => request(`/actions/${id}/approve`, { method: 'POST' }),
+  rejectAction: (id) => request(`/actions/${id}/reject`, { method: 'POST' }),
+  undoAction: (id) => request(`/actions/${id}/undo`, { method: 'POST' }),
+  formsSuggest: ({ label, pageTitle, accept }) => request('/forms/suggest', { method: 'POST', body: { label, page_title: pageTitle || '', accept: accept || null } }),
+  proactiveSettings: () => request('/proactive/settings'),
+  saveProactive: (body) => request('/proactive/settings', { method: 'PUT', body }),
+  proactivePreview: () => request('/proactive/preview'),
+  voiceStatus: () => request('/voice/status'),
+  downloadVoice: () => request('/voice/download', { method: 'POST' }),
+  stt: async (pcm) => {
+    const { token } = await config();
+    const r = await fetch((await base()) + '/voice/stt', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' }, body: pcm });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new ApiError(r.status, data.detail);
+    return data;
+  },
+  tts: async (text) => {
+    const { token } = await config();
+    const r = await fetch((await base()) + '/voice/tts', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => ({}))).detail);
+    return r.blob();
+  },
+  rateAnswer: (msgId, rating) => request('/learning/feedback', { method: 'POST', body: { msg_id: msgId, rating } }),
+  learningStats: () => request('/learning/stats'),
+  wipeLearning: () => request('/learning/wipe', { method: 'POST' }),
+  exportLearning: async () => {
+    const { token } = await config();
+    const r = await fetch((await base()) + '/learning/export', { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new ApiError(r.status, 'Export failed');
+    return r.text();
+  },
+  studyGenerate: (path, kind, count) => request('/study/generate', { method: 'POST', body: { path, kind, count } }),
+  studyCsv: async (items) => {
+    const { token } = await config();
+    const r = await fetch((await base()) + '/study/export', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) });
+    if (!r.ok) throw new ApiError(r.status, 'Export failed');
+    return r.text();
+  },
+  conversations: () => request('/conversations'),
+  conversation: (id) => request(`/conversations/${id}`),
+  deleteConversation: (id) => request(`/conversations/${id}`, { method: 'DELETE' }),
+  importConversations: (chats) => request('/conversations/import', { method: 'POST', body: { chats } }),
 };

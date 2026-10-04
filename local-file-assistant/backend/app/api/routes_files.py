@@ -9,7 +9,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
-from app.core import indexer
+from app.core import indexer, personalize
+from app.core.assistant import learning
 from app.core.watcher import watcher
 from app.db import sqlite_fts
 
@@ -22,6 +23,7 @@ class FolderRequest(BaseModel):
 
 class PathRequest(BaseModel):
     path: str
+    query: str = ""  # the search that led to opening it (optional; feeds search ranking)
 
 
 def _conn():
@@ -98,6 +100,7 @@ def roots():
     running = progress["folder"] if progress["state"] == "running" else None
     queued = set(progress.get("queue") or [])
     for r in rows:
+        r["profile"] = personalize.folder_profile(r["path"])
         if r["path"] == running:
             r["state"] = "scanning"
             r["progress"] = progress
@@ -122,6 +125,28 @@ def add_root(req: FolderRequest):
         conn.close()
     watcher.refresh()
     return _start_index([folder])
+
+
+class ProfileRequest(BaseModel):
+    folder: str
+    profile: dict
+
+
+@router.put("/roots/profile")
+def save_profile(req: ProfileRequest):
+    """Saves a folder's rules, then rescans it so files the new rules exclude leave the index
+    and newly allowed ones come in. If a scan is already running the rescan is left to the user."""
+    folder = _existing_dir(req.folder)
+    try:
+        profile = personalize.set_folder_profile(folder, req.profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        _start_index([folder])
+        rescan = "started"
+    except HTTPException:
+        rescan = "busy"
+    return {"profile": profile, "rescan": rescan}
 
 
 @router.post("/roots/remove")
@@ -163,6 +188,30 @@ def status():
     return {**_snapshot(), "errors": list(indexer.RECENT_ERRORS)}
 
 
+RECENT_LIMIT, CHANGED_DAYS = 8, 7
+
+
+@router.get("/recent")
+def recent():
+    """Files worth surfacing on the Chat home: the ones you opened last, then ones changed in the
+    past week. Only files still in the index; opening goes through /files/open, so the
+    open-history learning keeps working."""
+    conn = _conn()
+    try:
+        rows, seen = [], set()
+        for o in learning.recent_opens(RECENT_LIMIT * 3):
+            if o["path"] not in seen and sqlite_fts.is_indexed(conn, o["path"]):
+                seen.add(o["path"])
+                rows.append({"path": o["path"], "name": Path(o["path"]).name, "reason": "opened", "at": o["at"]})
+        for f in sqlite_fts.recent_files(conn, time.time() - CHANGED_DAYS * 86400, RECENT_LIMIT * 3):
+            if f["path"] not in seen:
+                seen.add(f["path"])
+                rows.append({"path": f["path"], "name": Path(f["path"]).name, "reason": "changed", "at": f["mtime"]})
+        return {"files": rows[:RECENT_LIMIT]}
+    finally:
+        conn.close()
+
+
 @router.get("")
 def list_files(root: str | None = None):
     conn = _conn()
@@ -188,4 +237,8 @@ def open_file(req: PathRequest):
         os.startfile(path)  # noqa: S606 - path is an indexed document, not user-typed
     else:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+    try:
+        learning.record_open(str(path), req.query)
+    except Exception:
+        pass  # learning must never stop a file from opening
     return {"opened": str(path)}

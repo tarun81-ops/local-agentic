@@ -3,25 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' ws://localhost:5173 http://127.0.0.1:*">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; media-src blob:; connect-src 'self' ws://localhost:5173 http://127.0.0.1:*">
 <title>Local File Assistant overlay</title>
 </head>
 <body class="overlay">
-  <div id="scrim">
-    <div id="panel" role="dialog" aria-label="Search or ask about your files">
+  <div id="panel" role="dialog" aria-label="Search or ask about your files">
       <div class="overlay-input">
         <div class="mark mark-overlay" aria-hidden="true"><div></div></div>
         <input id="query" type="text" autocomplete="off" spellcheck="false" aria-label="Search or ask" role="combobox" aria-autocomplete="list" aria-controls="overlay-body" aria-expanded="false">
+        <button type="button" id="pin" class="chip chip-btn" aria-pressed="false" title="Keep this window open when you click elsewhere">PIN</button>
         <div class="chip">ESC</div>
       </div>
       <div class="rule"></div>
+      <div id="context-chip" class="context-chip" hidden></div>
       <div class="overlay-tabs">
         <div class="tabs" role="tablist">
           <button type="button" class="tab" role="tab" data-mode="search" aria-selected="true">SEARCH</button>
           <button type="button" class="tab" role="tab" data-mode="ask" aria-selected="false">ASK</button>
+          <button type="button" class="tab" role="tab" data-mode="attach" aria-selected="false">ATTACH</button>
           <button type="button" class="tab" role="tab" data-mode="organize" aria-selected="false">ORGANIZE</button>
+          <div class="chip" id="tab-hint" aria-hidden="true">TAB &rarr; ASK</div>
         </div>
-        <div class="overlay-status"><span class="status-dot"></span><span id="overlay-status" role="status" aria-live="polite">LOCAL — READY</span></div>
+        <div class="overlay-status"><select id="overlay-style" class="mini-select" aria-label="Answer style for this question"><option value="">STYLE</option><option value="concise">CONCISE</option><option value="detailed">DETAILED</option><option value="study">STUDY</option><option value="simple">SIMPLE</option></select><span class="status-dot"></span><span id="overlay-status" role="status" aria-live="polite">LOCAL — READY</span></div>
       </div>
       <div id="overlay-body" aria-live="polite"></div>
       <div id="overlay-footer" class="overlay-footer" hidden>
@@ -29,7 +32,6 @@
         <div>ESC TO CLOSE</div>
       </div>
       <div class="overlay-note">100% LOCAL — NOTHING LEAVES THIS DEVICE</div>
-    </div>
   </div>
   <script type="module" src="/src/overlay.js"></script>
 </body>
