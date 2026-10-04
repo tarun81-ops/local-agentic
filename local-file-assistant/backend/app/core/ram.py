@@ -2,7 +2,7 @@
 Electron and OCR all compete for the same RAM, so heavy work backs off when it runs low."""
 import logging
 
-from app.config import settings
+from app.core import personalize
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ def status() -> dict:
         return {"free_mb": None, "total_mb": None, "low": False}
     vm = psutil.virtual_memory()
     free = vm.available // (1024 * 1024)
-    return {"free_mb": free, "total_mb": vm.total // (1024 * 1024), "low": free < settings.min_free_ram_mb}
+    return {"free_mb": free, "total_mb": vm.total // (1024 * 1024), "low": free < personalize.effective("min_free_ram_mb")}
 
 
 def is_low() -> bool:

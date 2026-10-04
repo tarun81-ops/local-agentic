@@ -125,6 +125,7 @@ export const api = {
   approveMemory: (id) => request(`/memory/${id}/approve`, { method: 'POST' }),
   approveAllMemories: () => request('/memory/approve-all', { method: 'POST' }),
   personalize: () => request('/personalize'),
+  performance: () => request('/personalize/performance'),
   savePersonalize: (patch) => request('/personalize', { method: 'PUT', body: patch }),
   addMemory: (text) => request('/memory', { method: 'POST', body: { text } }),
   updateMemory: (id, patch) => request(`/memory/${id}`, { method: 'PATCH', body: patch }),

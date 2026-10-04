@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.config import settings
+from app.core import personalize
 from app.core.chunking import Chunk, chunk_located
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def caption(path: Path) -> str:
 def parse_image(path: Path) -> list[Chunk]:
     parts = []
     override = CAPTION_OVERRIDE.get()
-    if settings.caption_images if override is None else override:
+    if personalize.effective("caption_images") if override is None else override:
         try:
             text = caption(path)
             if text:

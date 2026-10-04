@@ -7,6 +7,7 @@ import time
 import httpx
 
 from app.config import settings
+from app.core import personalize
 from app.core.llm.client import current_model
 
 log = logging.getLogger(__name__)
@@ -24,8 +25,9 @@ def touch() -> None:
 
 
 def _due(now: float) -> bool:
+    limit = personalize.effective("llm_idle_unload_s")
     with _lock:
-        return _last_used is not None and settings.llm_idle_unload_s > 0 and now - _last_used >= settings.llm_idle_unload_s
+        return _last_used is not None and limit > 0 and now - _last_used >= limit
 
 
 def unload() -> bool:
@@ -37,7 +39,7 @@ def unload() -> bool:
         return False
     try:
         httpx.post(f"{settings.ollama_url}/api/generate", json={"model": current_model(), "keep_alive": 0}, timeout=10)
-        log.info("unloaded %s after %ss idle", current_model(), settings.llm_idle_unload_s)
+        log.info("unloaded %s after %ss idle", current_model(), personalize.effective("llm_idle_unload_s"))
         return True
     except httpx.HTTPError as exc:
         log.warning("could not unload the model: %s", exc)

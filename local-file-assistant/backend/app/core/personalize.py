@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 
+from app.config import settings
 from app.core import prefs
 
 KEY = "personalize"
@@ -18,6 +19,9 @@ THEMES = ("system", "light", "dark")
 ACCENTS = ("red", "blue", "green", "violet")
 OVERLAY_POSITIONS = ("cursor", "center", "top-right")
 FONT_SCALE = (0.9, 1.3)
+PERF_PROFILES = ("battery", "balanced", "plugged", "auto")
+UNLOAD_MINUTES = (0, 240)
+MIN_FREE_RAM = (0, 8192)
 APPEARANCE = {"theme": "system", "accent": "red", "font_scale": 1.0, "overlay_compact": False, "overlay_position": "top-right"}
 
 DEFAULTS: dict = {
@@ -28,6 +32,8 @@ DEFAULTS: dict = {
     "verifier_strict": "normal",
     # reserved: validated loosely until their phase tightens them
     "perf_profile": "balanced",
+    "perf_unload_minutes": None,  # None = follow the profile; 0 = never unload the model
+    "perf_min_free_ram_mb": None,  # None = follow the profile / .env
     "appearance": dict(APPEARANCE),
     "memory_review": True,
     "folder_profiles": {},
@@ -144,6 +150,14 @@ def _check(key: str, value):
     elif isinstance(DEFAULTS[key], bool):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be on or off.")
+    elif key in ("perf_unload_minutes", "perf_min_free_ram_mb"):
+        lo, hi = UNLOAD_MINUTES if key == "perf_unload_minutes" else MIN_FREE_RAM
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi):
+            what = "Unload after (minutes)" if key == "perf_unload_minutes" else "Stop indexing below (MB free)"
+            raise ValueError(f"{what} is a whole number from {lo} to {hi}, or empty to follow the profile.")
+    elif key == "perf_profile":
+        if value not in PERF_PROFILES:
+            raise ValueError(f"perf_profile must be one of: {', '.join(PERF_PROFILES)}.")
     elif key == "appearance":
         value = clean_appearance(value)
     elif key == "folder_profiles":
@@ -173,3 +187,69 @@ def profile() -> str:
 def style() -> tuple[str, str, bool]:
     s = get_all()
     return s["answer_style"], s["language"], s["cite_pages"]
+
+
+# ---------- performance profiles ----------
+# Overrides of the .env values (settings). "balanced" overrides nothing: today's behaviour.
+PROFILES: dict[str, dict] = {
+    "battery": {"llm_idle_unload_s": 120, "caption_images": False, "embed_keep_alive": "30s", "history_turns": 3},
+    "balanced": {},
+    "plugged": {"llm_idle_unload_s": 1800, "caption_images": True, "history_turns": 6},
+}
+PROFILE_WORDS = {
+    "battery": "Unloads the model after 2 minutes, skips image captions, frees the embedder after 30 seconds and remembers 3 turns of chat.",
+    "balanced": "Your .env values, as they are today.",
+    "plugged": "Keeps the model loaded for 30 minutes, allows image captions and remembers 6 turns of chat.",
+    "auto": "Battery when unplugged, plugged-in when on power, balanced if this PC reports no battery.",
+}
+SUGGEST_BIGGER_MODEL_MB = 8000
+
+
+def power_state() -> str | None:
+    """"battery" / "plugged", or None when the PC reports no battery (a desktop, or psutil missing)."""
+    try:
+        import psutil
+
+        b = psutil.sensors_battery()
+    except Exception:
+        return None
+    if b is None or b.power_plugged is None:
+        return None
+    return "plugged" if b.power_plugged else "battery"
+
+
+def active_profile() -> str:
+    """The profile in force right now: auto resolves to battery or plugged, else balanced."""
+    chosen = get_all()["perf_profile"]
+    if chosen == "auto":
+        return power_state() or "balanced"
+    return chosen if chosen in PROFILES else "balanced"
+
+
+def effective(name: str):
+    """The value to use for a performance setting: your custom field, else the active profile's
+    override, else the .env value. Read this, not `settings`, wherever the profile should apply."""
+    cfg = get_all()
+    if name == "llm_idle_unload_s" and cfg["perf_unload_minutes"] is not None:
+        return cfg["perf_unload_minutes"] * 60
+    if name == "min_free_ram_mb" and cfg["perf_min_free_ram_mb"] is not None:
+        return cfg["perf_min_free_ram_mb"]
+    return PROFILES[active_profile()].get(name, getattr(settings, name))
+
+
+def performance_status(free_mb: int | None) -> dict:
+    """What the Settings page shows: the chosen and active profile, what is in force, and an
+    optional note about a bigger model. Never switches the model: that stays the user's call."""
+    active = active_profile()
+    note = ""
+    if active == "plugged" and free_mb is not None and free_mb >= SUGGEST_BIGGER_MODEL_MB:
+        note = "Plenty of free RAM. A larger model is an option in section 01, but the 4B model measured about 2x slower here, so it is never switched on for you."
+    return {
+        "chosen": get_all()["perf_profile"],
+        "active": active,
+        "power": power_state(),
+        "free_mb": free_mb,
+        "values": {k: effective(k) for k in ("llm_idle_unload_s", "min_free_ram_mb", "history_turns", "caption_images", "embed_keep_alive")},
+        "words": PROFILE_WORDS,
+        "note": note,
+    }

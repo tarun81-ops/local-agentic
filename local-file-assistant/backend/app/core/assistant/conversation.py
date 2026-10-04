@@ -3,6 +3,7 @@ import json
 import time
 
 from app.config import settings
+from app.core import personalize
 from app.db import assistant_db
 
 
@@ -89,7 +90,7 @@ def add_messages(conv_id: int, messages: list[tuple[str, str, dict]], at: float 
 def window(messages: list[dict], turns: int | None = None, token_budget: int | None = None) -> list[dict]:
     """The last `turns` exchanges as {role, content}, dropping the oldest until they fit the
     token budget. A small model needs room left for the excerpts, so this stays short."""
-    turns = settings.history_turns if turns is None else turns
+    turns = personalize.effective("history_turns") if turns is None else turns
     budget = (settings.history_token_budget if token_budget is None else token_budget) * 4  # ~4 chars/token
     kept = [{"role": m["role"], "content": m["content"]} for m in messages[-turns * 2 :]]
     while kept and sum(len(m["content"]) for m in kept) > budget:

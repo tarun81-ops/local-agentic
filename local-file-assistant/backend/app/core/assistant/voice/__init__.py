@@ -5,7 +5,7 @@ import threading
 import time
 
 from app.config import settings
-from app.core import ram
+from app.core import personalize, ram
 
 
 class VoiceUnavailable(RuntimeError):
@@ -38,7 +38,7 @@ class Lazy:
         return self._obj is not None
 
     def drop_if_idle(self, now: float) -> bool:
-        limit = settings.llm_idle_unload_s
+        limit = personalize.effective("llm_idle_unload_s")
         with self._lock:
             if self._obj is not None and limit > 0 and now - self._last >= limit:
                 self._obj = None

@@ -18,6 +18,7 @@ export function render(container, { onStatusChanged }) {
   const shortcutInput = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Alt+Space', 'aria-label': 'New shortcut' });
   const shortcutSet = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
   const meBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
+  const perfBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const lookBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const proBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const voiceBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
@@ -61,6 +62,7 @@ export function render(container, { onStatusChanged }) {
       el('section', {}, sectionHead('05', 'VOICE'), voiceBox),
       el('section', {}, sectionHead('06', 'LEARNING FROM USE'), learnBox),
       el('section', {}, sectionHead('07', 'APPEARANCE'), lookBox),
+      el('section', {}, sectionHead('08', 'PERFORMANCE'), perfBox),
     ),
   );
 
@@ -297,6 +299,40 @@ export function render(container, { onStatusChanged }) {
       lookBox.replaceChildren(notice(e.message, 'error'));
     }
   }
+  // Performance: a profile trades speed for battery and RAM. Changes apply to the next request, no restart.
+  const PROFILE_NAMES = { battery: 'BATTERY SAVER', balanced: 'BALANCED', plugged: 'PLUGGED IN', auto: 'AUTO (BATTERY OR PLUGGED IN)' };
+  async function loadPerf() {
+    try {
+      const [cfg, st] = await Promise.all([api.personalize(), api.performance()]);
+      const out = el('div');
+      const save = (patch) => api.savePersonalize(patch).then(() => { out.replaceChildren(notice('Saved.')); loadPerf(); }, (e) => out.replaceChildren(notice(e.message, 'error')));
+      const profile = el('select', { id: 'pf-profile', class: 'field field-mono' }, ...Object.entries(PROFILE_NAMES).map(([v, t]) => el('option', { value: v, selected: v === cfg.perf_profile }, t)));
+      profile.addEventListener('change', () => save({ perf_profile: profile.value }));
+      const number = (id, label, key, value, attrs) => {
+        const input = el('input', { id, type: 'number', class: 'shortcut-input', placeholder: 'follow profile', ...attrs });
+        input.value = value ?? '';
+        input.addEventListener('change', () => save({ [key]: input.value === '' ? null : Number(input.value) }));
+        return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
+      };
+      const gb = (mb) => (mb == null ? 'UNKNOWN' : `${(mb / 1024).toFixed(1)} GB`);
+      const unload = st.values.llm_idle_unload_s;
+      const power = st.power === 'battery' ? 'ON BATTERY' : st.power === 'plugged' ? 'PLUGGED IN' : 'NO BATTERY REPORTED';
+      perfBox.replaceChildren(
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'pf-profile' }, 'PROFILE'), profile),
+        el('div', { class: 'quiet' }, `IN FORCE NOW: ${PROFILE_NAMES[st.active]} · ${power} · FREE RAM ${gb(st.free_mb)}`),
+        el('div', { class: 'quiet' }, `Model unloads after ${unload > 0 ? `${Math.round(unload / 60)} min` : 'never'} · chat remembers ${st.values.history_turns} turns · image captions ${st.values.caption_images ? 'on' : 'off'} · embedder idle ${st.values.embed_keep_alive}`),
+        st.note ? notice(st.note) : '',
+        number('pf-unload', 'UNLOAD THE MODEL AFTER (MINUTES, 0 = NEVER)', 'perf_unload_minutes', cfg.perf_unload_minutes, { min: 0, max: 240 }),
+        number('pf-ram', 'STOP INDEXING WHEN FREE RAM IS BELOW (MB)', 'perf_min_free_ram_mb', cfg.perf_min_free_ram_mb, { min: 0, max: 8192 }),
+        el('div', { class: 'mem-group' }, 'WHAT EACH PROFILE CHANGES'),
+        ...Object.entries(st.words).map(([k, text]) => el('div', { class: 'quiet' }, `${PROFILE_NAMES[k]} — ${text}`)),
+        out,
+      );
+    } catch (e) {
+      perfBox.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  loadPerf();
   loadLook();
   loadMe();
   loadLearning();
