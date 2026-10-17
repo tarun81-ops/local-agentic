@@ -16,7 +16,7 @@ export function render(container, { onStatusChanged }) {
   const toggle = el('input', { type: 'checkbox', id: 'launch-at-startup', class: 'toggle', role: 'switch' });
   const shortcut = el('span', { class: 'keys' });
   const shortcutInput = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Alt+Space', 'aria-label': 'New shortcut' });
-  const shortcutSet = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
+  const shortcutSet = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Set');
   const meBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const perfBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
   const lookBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
@@ -26,48 +26,48 @@ export function render(container, { onStatusChanged }) {
   const learnBox = el('div', { class: 'box box-pad stack' }, el('div', { class: 'quiet' }, 'Loading…'));
 
   container.replaceChildren(
-    el('header', { class: 'page-head' }, el('h1', { class: 'page-title' }, 'SETTINGS')),
+    el('header', { class: 'page-head' }, el('h1', { class: 'page-title' }, 'Settings')),
     el(
       'div',
       { class: 'page-body sections' },
       flash,
-      el('section', {}, sectionHead('00', 'ABOUT ME & ANSWERS'), meBox),
-      el('section', {}, sectionHead('01', 'MODEL & BACKEND'), model),
+      el('section', {}, sectionHead('00', 'About me & answers'), meBox),
+      el('section', {}, sectionHead('01', 'Model & backend'), model),
       el(
         'div',
         { class: 'two-col' },
         el(
           'section',
           {},
-          sectionHead('02', 'GLOBAL SHORTCUT'),
+          sectionHead('02', 'Global shortcut'),
           el(
             'div',
             { class: 'box box-pad stack' },
-            el('div', { class: 'kv kv-plain' }, el('div', {}, 'SUMMON OVERLAY'), el('div', { class: 'row-gap' }, shortcut, shortcutInput, shortcutSet)),
-            el('div', { class: 'kv kv-plain' }, el('label', { for: 'launch-at-startup' }, 'LAUNCH AT STARTUP'), toggle),
+            el('div', { class: 'kv kv-plain' }, el('div', {}, 'Summon overlay'), el('div', { class: 'row-gap' }, shortcut, shortcutInput, shortcutSet)),
+            el('div', { class: 'kv kv-plain' }, el('label', { for: 'launch-at-startup' }, 'Launch at startup'), toggle),
           ),
         ),
         el(
           'section',
           {},
-          sectionHead('03', 'PRIVACY'),
+          sectionHead('03', 'Privacy'),
           el(
             'div',
             { class: 'privacy' },
-            el('div', { class: 'privacy-h' }, 'PRIVATE BY DESIGN'),
+            el('div', { class: 'privacy-h' }, 'Private by design'),
             el('div', {}, 'Nothing you index or ask ever leaves this device. No cloud calls, no telemetry.'),
           ),
         ),
       ),
-      el('section', {}, sectionHead('04', 'PROACTIVE SUGGESTIONS'), proBox, inboxBox),
-      el('section', {}, sectionHead('05', 'VOICE'), voiceBox),
-      el('section', {}, sectionHead('06', 'LEARNING FROM USE'), learnBox),
-      el('section', {}, sectionHead('07', 'APPEARANCE'), lookBox),
-      el('section', {}, sectionHead('08', 'PERFORMANCE'), perfBox),
+      el('section', {}, sectionHead('04', 'Proactive suggestions'), proBox, inboxBox),
+      el('section', {}, sectionHead('05', 'Voice'), voiceBox),
+      el('section', {}, sectionHead('06', 'Learning from use'), learnBox),
+      el('section', {}, sectionHead('07', 'Appearance'), lookBox),
+      el('section', {}, sectionHead('08', 'Performance'), perfBox),
     ),
   );
 
-  const showKeys = (keys) => shortcut.replaceChildren(...keys.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.toUpperCase())]));
+  const showKeys = (keys) => shortcut.replaceChildren(...keys.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.length > 1 ? k[0].toUpperCase() + k.slice(1).toLowerCase() : k.toUpperCase())]));
   window.lfa.shortcut().then(showKeys);
   shortcutSet.addEventListener('click', async () => {
     const r = await window.lfa.setShortcut(shortcutInput.value);
@@ -97,17 +97,17 @@ export function render(container, { onStatusChanged }) {
       };
       const sw = { type: 'checkbox', class: 'toggle', role: 'switch' };
       const time = { type: 'time', class: 'shortcut-input' };
-      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SAVE');
-      const preview = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'PREVIEW TODAY’S BRIEFING');
+      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Save');
+      const preview = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Preview today’s briefing');
       const out = el('div');
       const rows = [
-        field('p-briefing', 'MORNING BRIEFING', 'briefing', sw, c.briefing),
-        field('p-btime', 'BRIEFING TIME', 'briefing_time', time, c.briefing_time),
-        field('p-overdue', 'EVENING NUDGE FOR OVERDUE TASKS', 'overdue', sw, c.overdue),
-        field('p-qs', 'QUIET HOURS FROM', 'quiet_start', time, c.quiet_start),
-        field('p-qe', 'QUIET HOURS UNTIL', 'quiet_end', time, c.quiet_end),
-        field('p-cap', 'MOST SUGGESTIONS PER DAY', 'daily_cap', { type: 'number', min: 0, max: 10, class: 'shortcut-input' }, c.daily_cap),
-        field('p-model', 'LET THE LOCAL MODEL REWORD THE BRIEFING (USES MORE RAM)', 'use_model', sw, c.use_model),
+        field('p-briefing', 'Morning briefing', 'briefing', sw, c.briefing),
+        field('p-btime', 'Briefing time', 'briefing_time', time, c.briefing_time),
+        field('p-overdue', 'Evening nudge for overdue tasks', 'overdue', sw, c.overdue),
+        field('p-qs', 'Quiet hours from', 'quiet_start', time, c.quiet_start),
+        field('p-qe', 'Quiet hours until', 'quiet_end', time, c.quiet_end),
+        field('p-cap', 'Most suggestions per day', 'daily_cap', { type: 'number', min: 0, max: 10, class: 'shortcut-input' }, c.daily_cap),
+        field('p-model', 'Let the local model reword the briefing (uses more ram)', 'use_model', sw, c.use_model),
       ];
       proBox.replaceChildren(...rows, el('div', { class: 'row-gap' }, save, preview), out);
       save.addEventListener('click', async () => {
@@ -138,17 +138,17 @@ export function render(container, { onStatusChanged }) {
   async function loadVoice(errors = {}) {
     try {
       const [s, keys] = await Promise.all([api.voiceStatus(), window.lfa.shortcuts()]);
-      const ready = (ok) => (ok ? 'READY' : 'NOT DOWNLOADED');
+      const ready = (ok) => (ok ? 'Ready' : 'Not downloaded');
       const input = el('input', { type: 'text', class: 'shortcut-input', placeholder: 'e.g. Ctrl+Shift+Alt+V', 'aria-label': 'New voice shortcut' });
-      const set = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SET');
-      const keyCaps = (text) => el('span', { class: 'keys' }, ...text.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.toUpperCase())]));
-      const download = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'DOWNLOAD VOICE MODELS');
+      const set = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Set');
+      const keyCaps = (text) => el('span', { class: 'keys' }, ...text.split('+').flatMap((k, i) => [i ? el('span', { class: 'plus' }, '+') : '', el('kbd', {}, k.length > 1 ? k[0].toUpperCase() + k.slice(1).toLowerCase() : k.toUpperCase())]));
+      const download = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Download voice models');
       download.disabled = s.stt.available && s.tts.available;
       const out = el('div', {}, ...Object.entries(errors).map(([k, v]) => notice(`${k === 'stt' ? 'Speech recognition' : 'Voice'}: ${v}`, 'error')));
       voiceBox.replaceChildren(
-        el('div', { class: 'kv kv-plain' }, el('div', {}, `SPEECH RECOGNITION (${s.stt.model})`), el('div', {}, ready(s.stt.available))),
-        el('div', { class: 'kv kv-plain' }, el('div', {}, `SPOKEN ANSWERS (${s.tts.voice})`), el('div', {}, ready(s.tts.available))),
-        el('div', { class: 'kv kv-plain' }, el('div', {}, 'TALK TO THE ASSISTANT'), el('div', { class: 'row-gap' }, keyCaps(keys.voice), input, set)),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, `Speech recognition (${s.stt.model})`), el('div', {}, ready(s.stt.available))),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, `Spoken answers (${s.tts.voice})`), el('div', {}, ready(s.tts.available))),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, 'Talk to the assistant'), el('div', { class: 'row-gap' }, keyCaps(keys.voice), input, set)),
         el('div', { class: 'row-gap' }, download),
         out,
       );
@@ -176,13 +176,13 @@ export function render(container, { onStatusChanged }) {
   async function loadLearning() {
     try {
       const s = await api.learningStats();
-      const exportBtn = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'EXPORT NOT-HELPFUL QUESTIONS');
-      const wipeBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'FORGET WHAT I OPEN AND RATE');
+      const exportBtn = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Export not-helpful questions');
+      const wipeBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Forget what I open and rate');
       exportBtn.disabled = s.not_helpful === 0;
       const out = el('div');
       learnBox.replaceChildren(
-        el('div', { class: 'kv kv-plain' }, el('div', {}, 'FILE OPENS REMEMBERED'), el('div', {}, String(s.opens))),
-        el('div', { class: 'kv kv-plain' }, el('div', {}, 'ANSWERS MARKED HELPFUL / NOT HELPFUL'), el('div', {}, `${s.helpful} / ${s.not_helpful}`)),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, 'File opens remembered'), el('div', {}, String(s.opens))),
+        el('div', { class: 'kv kv-plain' }, el('div', {}, 'Answers marked helpful / not helpful'), el('div', {}, `${s.helpful} / ${s.not_helpful}`)),
         el('div', { class: 'row-gap' }, exportBtn, wipeBtn),
         out,
       );
@@ -228,17 +228,16 @@ export function render(container, { onStatusChanged }) {
         input.dataset.key = key;
         return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
       };
-      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SAVE');
+      const save = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Save');
       const out = el('div');
       meBox.replaceChildren(
-        el('label', { for: 'pz-profile' }, 'ABOUT ME (SHARED WITH THE LOCAL MODEL ON EVERY QUESTION; NEVER LEAVES THIS PC)'),
+        el('label', { for: 'pz-profile' }, 'About me (shared with the local model on every question; never leaves this PC)'),
         profile,
         count,
-        select('pz-style', 'ANSWER STYLE', 'answer_style', [['concise', 'CONCISE'], ['detailed', 'DETAILED'], ['study', 'STUDY'], ['simple', 'SIMPLE']], c.answer_style),
-        select('pz-lang', 'LANGUAGE', 'language', [['auto', 'MATCH WHAT I WRITE'], ['english', 'ENGLISH'], ['hinglish', 'HINGLISH']], c.language),
-        sw('pz-cite', 'ALWAYS CITE PAGE NUMBERS', 'cite_pages', c.cite_pages),
-        select('pz-strict', 'CITATION CHECKING', 'verifier_strict', [['normal', 'NORMAL'], ['strict', 'STRICT (FLAGS MORE CLAIMS)']], c.verifier_strict),
-        sw('pz-review', 'ASK ME BEFORE SAVING WHAT I LEARN FROM CHATS', 'memory_review', c.memory_review),
+        select('pz-style', 'Answer style', 'answer_style', [['concise', 'Concise'], ['detailed', 'Detailed'], ['study', 'Study'], ['simple', 'Simple']], c.answer_style),
+        select('pz-lang', 'Language', 'language', [['auto', 'Match what I write'], ['english', 'English'], ['hinglish', 'Hinglish']], c.language),
+        sw('pz-cite', 'Always cite page numbers', 'cite_pages', c.cite_pages),
+        select('pz-strict', 'Citation checking', 'verifier_strict', [['normal', 'Normal'], ['strict', 'Strict (flags more claims)']], c.verifier_strict),
         el('div', { class: 'row-gap' }, save),
         out,
       );
@@ -280,19 +279,19 @@ export function render(container, { onStatusChanged }) {
       compact.checked = current.overlay_compact;
       compact.addEventListener('change', () => change({ overlay_compact: compact.checked }));
       lookBox.replaceChildren(
-        select('lk-theme', 'THEME', 'theme', [['system', 'FOLLOW WINDOWS'], ['light', 'LIGHT'], ['dark', 'DARK']]),
-        select('lk-accent', 'ACCENT COLOUR', 'accent', [['red', 'RED'], ['blue', 'BLUE'], ['green', 'GREEN'], ['violet', 'VIOLET']]),
-        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-size' }, 'TEXT SIZE'), el('div', { class: 'row-gap' }, size, sizeNote)),
-        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-compact' }, 'COMPACT OVERLAY (SMALLER, FEWER RESULTS)'), compact),
-        select('lk-pos', 'OVERLAY POSITION', 'overlay_position', [['top-right', 'TOP RIGHT'], ['center', 'CENTRE'], ['cursor', 'NEAR THE CURSOR']]),
+        select('lk-theme', 'Theme', 'theme', [['system', 'Follow Windows'], ['light', 'Light'], ['dark', 'Dark']]),
+        select('lk-accent', 'Accent colour', 'accent', [['red', 'Red'], ['blue', 'Blue'], ['green', 'Green'], ['violet', 'Violet']]),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-size' }, 'Text size'), el('div', { class: 'row-gap' }, size, sizeNote)),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'lk-compact' }, 'Compact overlay (smaller, fewer results)'), compact),
+        select('lk-pos', 'Overlay position', 'overlay_position', [['top-right', 'Top right'], ['center', 'Centre'], ['cursor', 'Near the cursor']]),
         el(
           'div',
           { class: 'look-preview', 'aria-label': 'Preview' },
-          el('span', { class: 'btn btn-primary btn-sm' }, 'PRIMARY'),
-          el('span', { class: 'btn btn-outline btn-sm' }, 'OUTLINE'),
-          el('span', { class: 'link-btn' }, 'LINK'),
-          el('span', { class: 'badge badge-red' }, 'ACCENT'),
-          el('span', { class: 'badge badge-blue' }, 'LOCAL'),
+          el('span', { class: 'btn btn-primary btn-sm' }, 'Primary'),
+          el('span', { class: 'btn btn-outline btn-sm' }, 'Outline'),
+          el('span', { class: 'link-btn' }, 'Link'),
+          el('span', { class: 'badge badge-red' }, 'Accent'),
+          el('span', { class: 'badge badge-blue' }, 'Local'),
         ),
         out,
       );
@@ -301,7 +300,7 @@ export function render(container, { onStatusChanged }) {
     }
   }
   // Performance: a profile trades speed for battery and RAM. Changes apply to the next request, no restart.
-  const PROFILE_NAMES = { battery: 'BATTERY SAVER', balanced: 'BALANCED', plugged: 'PLUGGED IN', auto: 'AUTO (BATTERY OR PLUGGED IN)' };
+  const PROFILE_NAMES = { battery: 'Battery saver', balanced: 'Balanced', plugged: 'Plugged in', auto: 'Auto (battery or plugged in)' };
   async function loadPerf() {
     try {
       const [cfg, st] = await Promise.all([api.personalize(), api.performance()]);
@@ -315,17 +314,17 @@ export function render(container, { onStatusChanged }) {
         input.addEventListener('change', () => save({ [key]: input.value === '' ? null : Number(input.value) }));
         return el('div', { class: 'kv kv-plain' }, el('label', { for: id }, label), input);
       };
-      const gb = (mb) => (mb == null ? 'UNKNOWN' : `${(mb / 1024).toFixed(1)} GB`);
+      const gb = (mb) => (mb == null ? 'Unknown' : `${(mb / 1024).toFixed(1)} GB`);
       const unload = st.values.llm_idle_unload_s;
-      const power = st.power === 'battery' ? 'ON BATTERY' : st.power === 'plugged' ? 'PLUGGED IN' : 'NO BATTERY REPORTED';
+      const power = st.power === 'battery' ? 'On battery' : st.power === 'plugged' ? 'Plugged in' : 'No battery reported';
       perfBox.replaceChildren(
-        el('div', { class: 'kv kv-plain' }, el('label', { for: 'pf-profile' }, 'PROFILE'), profile),
-        el('div', { class: 'quiet' }, `IN FORCE NOW: ${PROFILE_NAMES[st.active]} · ${power} · FREE RAM ${gb(st.free_mb)}`),
+        el('div', { class: 'kv kv-plain' }, el('label', { for: 'pf-profile' }, 'Profile'), profile),
+        el('div', { class: 'quiet' }, `In force now: ${PROFILE_NAMES[st.active]} · ${power} · free RAM ${gb(st.free_mb)}`),
         el('div', { class: 'quiet' }, `Model unloads after ${unload > 0 ? `${Math.round(unload / 60)} min` : 'never'} · chat remembers ${st.values.history_turns} turns · image captions ${st.values.caption_images ? 'on' : 'off'} · embedder idle ${st.values.embed_keep_alive}`),
         st.note ? notice(st.note) : '',
-        number('pf-unload', 'UNLOAD THE MODEL AFTER (MINUTES, 0 = NEVER)', 'perf_unload_minutes', cfg.perf_unload_minutes, { min: 0, max: 240 }),
-        number('pf-ram', 'STOP INDEXING WHEN FREE RAM IS BELOW (MB)', 'perf_min_free_ram_mb', cfg.perf_min_free_ram_mb, { min: 0, max: 8192 }),
-        el('div', { class: 'mem-group' }, 'WHAT EACH PROFILE CHANGES'),
+        number('pf-unload', 'Unload the model after (minutes, 0 = never)', 'perf_unload_minutes', cfg.perf_unload_minutes, { min: 0, max: 240 }),
+        number('pf-ram', 'Stop indexing when free RAM is below (MB)', 'perf_min_free_ram_mb', cfg.perf_min_free_ram_mb, { min: 0, max: 8192 }),
+        el('div', { class: 'mem-group' }, 'What each profile changes'),
         ...Object.entries(st.words).map(([k, text]) => el('div', { class: 'quiet' }, `${PROFILE_NAMES[k]} — ${text}`)),
         out,
       );
@@ -339,15 +338,15 @@ export function render(container, { onStatusChanged }) {
       const { inbox_folders: folders } = await api.personalize();
       const out = el('div');
       const save = (next) => api.savePersonalize({ inbox_folders: next }).then(loadInbox, (e) => out.replaceChildren(notice(e.message, 'error')));
-      const add = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, '+ ADD A FOLDER');
+      const add = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, '+ Add a folder');
       add.addEventListener('click', async () => {
         const picked = await window.lfa.pickFolder();
         if (picked) save([...folders, picked]);
       });
       inboxBox.replaceChildren(
-        el('div', { class: 'mem-group' }, 'NEW-FILE NUDGE (OFF UNTIL YOU ADD A FOLDER)'),
+        el('div', { class: 'mem-group' }, 'New-file nudge (off until you add a folder)'),
         el('div', { class: 'quiet' }, 'When new files appear in these folders (say Downloads), I can tell you once a day and offer to open Organize. I only read file names. Nothing is moved unless you approve a plan.'),
-        ...folders.map((f) => el('div', { class: 'kv kv-plain' }, el('div', { class: 'folder-path' }, f), el('button', { type: 'button', class: 'link-btn', 'aria-label': `Stop watching ${f}`, onclick: () => save(folders.filter((x) => x !== f)) }, 'REMOVE'))),
+        ...folders.map((f) => el('div', { class: 'kv kv-plain' }, el('div', { class: 'folder-path' }, f), el('button', { type: 'button', class: 'link-btn', 'aria-label': `Stop watching ${f}`, onclick: () => save(folders.filter((x) => x !== f)) }, 'Remove'))),
         el('div', { class: 'row-gap' }, add),
         out,
       );
@@ -369,7 +368,7 @@ export function render(container, { onStatusChanged }) {
       const picker = el('select', { class: 'field field-mono', id: 'model-select', 'aria-label': 'Model' });
       const models = s.ollama.models.includes(s.model) ? s.ollama.models : [s.model, ...s.ollama.models];
       picker.append(...models.map((m) => el('option', { value: m, selected: m === s.model }, m)));
-      const save = el('button', { type: 'button', class: 'link-btn', disabled: true }, 'CHANGE');
+      const save = el('button', { type: 'button', class: 'link-btn', disabled: true }, 'Change');
       picker.addEventListener('change', () => (save.disabled = picker.value === s.model));
       save.addEventListener('click', async () => {
         try {
@@ -382,20 +381,20 @@ export function render(container, { onStatusChanged }) {
         }
       });
       model.replaceChildren(
-        kv('BASE URL', el('span', { class: 'mono' }, s.base_url)),
-        kv('MODEL', picker, save),
-        kv('EMBEDDING MODEL', el('span', { class: 'mono' }, s.embedding_model)),
+        kv('Base URL', el('span', { class: 'mono' }, s.base_url)),
+        kv('Model', picker, save),
+        kv('Embedding model', el('span', { class: 'mono' }, s.embedding_model)),
         kv(
-          'CONNECTION',
+          'Connection',
           s.ollama.connected
-            ? el('span', { class: 'conn' }, el('span', { class: 'status-dot' }), 'CONNECTED')
-            : el('span', { class: 'conn conn-off' }, 'NOT RUNNING — start Ollama, then reopen this page'),
+            ? el('span', { class: 'conn' }, el('span', { class: 'status-dot' }), 'Connected')
+            : el('span', { class: 'conn conn-off' }, 'Not running — start Ollama, then reopen this page'),
         ),
-        kv('FILE TYPES', el('span', { class: 'mono' }, s.file_types.join('  '))),
-        kv('DATA FOLDER', el('span', { class: 'mono' }, s.data_dir)),
+        kv('File types', el('span', { class: 'mono' }, s.file_types.join('  '))),
+        kv('Data folder', el('span', { class: 'mono' }, s.data_dir)),
         s.memory?.free_mb != null
           ? kv(
-              'FREE MEMORY',
+              'Free memory',
               el(
                 'span',
                 { class: `mono ${s.memory.low ? 'conn-off' : ''}` },

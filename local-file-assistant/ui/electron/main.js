@@ -8,12 +8,19 @@ const path = require('path');
 const DEFAULT_SHORTCUT = 'CommandOrControl+Shift+Space';
 // Rarely taken: Ctrl+Shift+V is plain-text paste in browsers, and Ctrl+Alt+Space is Claude desktop's quick entry.
 const DEFAULT_VOICE_SHORTCUT = 'CommandOrControl+Shift+Alt+V';
-const OVERLAY_SIZE = { normal: [520, 640], compact: [440, 400] };
+// The overlay is a slim strip (Spotlight-style) that grows downward only while it shows results.
+// [width, strip height, tallest it may grow]; all include the 12px see-through margin round the card.
+const OVERLAY_SIZE = { normal: [700, 80, 580], compact: [580, 76, 420] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Windows shows toast notifications only for an app with a registered id (matches build.appId).
-app.setAppUserModelId('com.localfileassistant.app');
+if (process.platform === 'win32') app.setAppUserModelId('com.localfileassistant.app');
+const IS_WIN = process.platform === 'win32';
 const IS_DEV = process.argv.includes('--dev');
 const START_HIDDEN = process.argv.includes('--hidden'); // launched at login: live in the tray
+// Dev runs get their own data folder, and with it their own single-instance lock. The installed app
+// launches at login and sits in the tray under the same default folder name, so without this a
+// dev launch finds the lock taken and quits at once. Must run before requestSingleInstanceLock().
+if (IS_DEV) app.setPath('userData', path.join(app.getPath('appData'), 'local-file-assistant-ui-dev'));
 const DEV_SERVER_URL = 'http://localhost:5173';
 const API_TOKEN = crypto.randomBytes(32).toString('hex');
 
@@ -79,18 +86,21 @@ function freePort() {
 
 function backendCommand() {
   if (app.isPackaged) {
-    // Frozen with PyInstaller by scripts\build-backend.ps1, shipped via extraResources.
-    const exe = path.join(process.resourcesPath, 'backend', 'lfa-backend.exe');
+    // Frozen with PyInstaller by scripts/build-backend.(ps1|sh), shipped via extraResources.
+    const name = IS_WIN ? 'lfa-backend.exe' : 'lfa-backend';
+    const exe = path.join(process.resourcesPath, 'backend', name);
     return { cmd: exe, args: [], cwd: path.dirname(exe) };
   }
   const dir = path.join(__dirname, '..', '..', 'backend');
-  return { cmd: path.join(dir, '.venv', 'Scripts', 'python.exe'), args: ['run.py'], cwd: dir };
+  // A venv keeps its interpreter in Scripts\python.exe on Windows and bin/python on Linux/macOS.
+  const py = IS_WIN ? path.join(dir, '.venv', 'Scripts', 'python.exe') : path.join(dir, '.venv', 'bin', 'python');
+  return { cmd: py, args: ['run.py'], cwd: dir };
 }
 
 function startBackend() {
   const { cmd, args, cwd } = backendCommand();
   if (!fs.existsSync(cmd)) {
-    log(`backend not found at ${cmd}. Run scripts\\setup.ps1 (dev) or rebuild the installer.`);
+    log(`backend not found at ${cmd}. Run scripts/setup.ps1 (Windows) or scripts/setup.sh (Linux), or rebuild the app.`);
     return;
   }
   const child = spawn(cmd, args, {
@@ -180,12 +190,15 @@ function createOverlay() {
   overlay = new BrowserWindow({
     width: OVERLAY_SIZE.normal[0],
     height: OVERLAY_SIZE.normal[1],
-    minWidth: 420,
-    minHeight: 360,
     frame: false,
-    backgroundColor: '#F5F3EE',
+    // See-through window: the page draws a rounded, translucent card with a shadow, and the
+    // desktop shows around and behind it. (Windows can't resize transparent windows by the edge;
+    // the size comes from Settings > Appearance > compact instead.)
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
     alwaysOnTop: true,
-    resizable: true,
+    resizable: false,
     skipTaskbar: true,
     show: false,
     webPreferences,
@@ -222,14 +235,13 @@ function placeOverlay() {
   if (overlayPinned) return;
   const cursor = screen.getCursorScreenPoint();
   const wa = screen.getDisplayNearestPoint(cursor).workArea;
-  const [w, fullH] = OVERLAY_SIZE[overlayPrefs.overlay_compact ? 'compact' : 'normal'];
-  const h = Math.min(fullH, wa.height - 32);
+  const [w, h] = OVERLAY_SIZE[overlayPrefs.overlay_compact ? 'compact' : 'normal']; // starts as just the strip
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   let x = wa.x + wa.width - w - 16;
   let y = wa.y + 16;
   if (overlayPrefs.overlay_position === 'center') {
     x = wa.x + Math.round((wa.width - w) / 2);
-    y = wa.y + Math.round((wa.height - h) / 3);
+    y = wa.y + Math.round(wa.height / 4); // room below for results to grow into
   } else if (overlayPrefs.overlay_position === 'cursor') {
     x = clamp(cursor.x - Math.round(w / 2), wa.x + 8, wa.x + wa.width - w - 8);
     y = clamp(cursor.y + 16, wa.y + 8, wa.y + wa.height - h - 8);
@@ -478,7 +490,7 @@ ipcMain.handle('overlay:insert', async (_e, text) => {
 });
 ipcMain.handle('dialog:pick-folder', async (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
-  const result = await dialog.showOpenDialog(win, { title: 'Choose a folder to index', properties: ['openDirectory'] });
+  const result = await dialog.showOpenDialog(win, { title: 'Choose a folder', properties: ['openDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
 ipcMain.handle('app:get-login', () => ({
@@ -491,6 +503,15 @@ ipcMain.handle('app:set-login', (_e, enabled) => {
   return true;
 });
 ipcMain.on('overlay:hide', hideOverlay);
+// The page asks for the height its content needs; the strip grows down to a limit, then scrolls.
+ipcMain.on('overlay:resize', (e, wanted) => {
+  if (e.sender !== overlay.webContents || !Number.isFinite(wanted)) return;
+  const b = overlay.getBounds();
+  const [, minH, maxH] = OVERLAY_SIZE[overlayPrefs.overlay_compact ? 'compact' : 'normal'];
+  const wa = screen.getDisplayMatching(b).workArea;
+  const h = Math.round(Math.max(minH, Math.min(wanted, maxH, wa.y + wa.height - b.y - 8)));
+  if (h !== b.height) overlay.setBounds({ x: b.x, y: b.y, width: b.width, height: h });
+});
 ipcMain.on('main:open', (_e, page) => {
   hideOverlay();
   showMain(page);
@@ -499,7 +520,14 @@ ipcMain.on('main:open', (_e, page) => {
 // ---------- lifecycle ----------
 
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  if (IS_DEV) {
+    // Don't fail silently: an exit code of 0 here makes `concurrently -k` kill Vite with no explanation.
+    console.error('[electron] Another instance already holds the single-instance lock (a copy still running in the tray).');
+    console.error('[electron] Quit it from the tray icon, or just run `npm run dev` again: the predev hook stops leftover dev instances.');
+    app.exit(1);
+  } else {
+    app.quit(); // normal launch while the app is already running: the first instance shows its window
+  }
 } else {
   app.on('second-instance', () => showMain());
 

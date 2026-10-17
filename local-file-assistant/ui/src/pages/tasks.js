@@ -13,16 +13,16 @@ function startOfToday() {
 /** Tasks and reminders, plus a 7-day strip of events and due dates. */
 export function render(container) {
   const quick = el('input', { type: 'text', class: 'field', placeholder: 'Remind me to call mom tomorrow at 5pm…', 'aria-label': 'Add a task or reminder' });
-  const addBtn = el('button', { type: 'button', class: 'btn btn-ink' }, 'ADD');
-  const exportBtn = el('button', { type: 'button', class: 'btn btn-outline' }, 'EXPORT .ICS');
-  const importBtn = el('button', { type: 'button', class: 'btn btn-outline' }, 'IMPORT .ICS');
+  const addBtn = el('button', { type: 'button', class: 'btn btn-ink' }, 'Add');
+  const exportBtn = el('button', { type: 'button', class: 'btn btn-outline' }, 'Export .ics');
+  const importBtn = el('button', { type: 'button', class: 'btn btn-outline' }, 'Import .ics');
   const file = el('input', { type: 'file', accept: '.ics,text/calendar', hidden: true });
   const flash = el('div');
   const strip = el('div', { class: 'cal-strip' });
   const lists = el('div', { class: 'page-body' });
 
   container.replaceChildren(
-    el('header', { class: 'page-head' }, el('div', {}, el('h1', { class: 'page-title' }, 'TASKS'), el('div', { class: 'page-sub' }, 'REMINDERS FIRE AS DESKTOP NOTIFICATIONS WHILE THE APP RUNS IN THE TRAY')), el('div', { class: 'head-actions' }, exportBtn, importBtn, file)),
+    el('header', { class: 'page-head' }, el('div', {}, el('h1', { class: 'page-title' }, 'Tasks'), el('div', { class: 'page-sub' }, 'Reminders fire as desktop notifications while the app runs in the tray')), el('div', { class: 'head-actions' }, exportBtn, importBtn, file)),
     el('div', { class: 'toolbar' }, quick, addBtn),
     flash,
     strip,
@@ -40,11 +40,11 @@ export function render(container) {
       'div',
       { class: `task-row ${done ? 'task-done' : ''}` },
       check,
-      el('div', { class: 'task-main' }, el('div', { class: 'task-title' }, t.title), el('div', { class: 'task-when' }, [when != null ? whenText(when) : 'NO DATE', t.repeat ? `REPEATS ${t.repeat.toUpperCase()}` : ''].filter(Boolean).join(' · ')), t.file_path ? el('div', { class: 'task-when' }, `FILE: ${t.file_path.split(/[\\/]/).pop()}`) : ''),
-      t.file_path ? el('button', { type: 'button', class: 'btn btn-ink btn-sm', 'aria-label': `Open the file for: ${t.title}`, onclick: () => api.open(t.file_path).catch(fail) }, 'OPEN') : '',
+      el('div', { class: 'task-main' }, el('div', { class: 'task-title' }, t.title), el('div', { class: 'task-when' }, [when != null ? whenText(when) : 'No date', t.repeat ? `repeats ${t.repeat}` : ''].filter(Boolean).join(' · ')), t.file_path ? el('div', { class: 'task-when' }, `FILE: ${t.file_path.split(/[\\/]/).pop()}`) : ''),
+      t.file_path ? el('button', { type: 'button', class: 'btn btn-ink btn-sm', 'aria-label': `Open the file for: ${t.title}`, onclick: () => api.open(t.file_path).catch(fail) }, 'Open') : '',
       done
         ? ''
-        : el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => api.snoozeTask(t.id, 10).then(load, fail) }, 'SNOOZE 10 MIN'),
+        : el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => api.snoozeTask(t.id, 10).then(load, fail) }, 'Snooze 10 min'),
       el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Delete: ${t.title}`, onclick: () => api.deleteTask(t.id).then(load, fail) }, 'DELETE'),
     );
   }
@@ -62,7 +62,7 @@ export function render(container) {
           ...events.filter((e) => e.start_at < to && e.end_at > from).map((e) => `${e.all_day ? '' : whenText(e.start_at).split(', ')[1] + ' '}${e.title}`),
           ...open.filter((t) => (t.due_at ?? t.remind_at) >= from && (t.due_at ?? t.remind_at) < to).map((t) => `☐ ${t.title}`),
         ];
-        const label = new Date(from * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }).toUpperCase();
+        const label = new Date(from * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
         return el('div', { class: `cal-day ${i === 0 ? 'cal-today' : ''}` }, el('div', { class: 'cal-h' }, label), ...items.slice(0, 4).map((x) => el('div', { class: 'cal-item' }, x)), items.length > 4 ? el('div', { class: 'cal-item' }, `+${items.length - 4} more`) : '');
       }),
     );
@@ -81,8 +81,8 @@ export function render(container) {
       const undated = open.filter((t) => dated(t) == null);
       const done = tasks.filter((t) => t.status === 'done').slice(-10).reverse();
       drawStrip(open, events, today);
-      const all = [...section('OVERDUE', overdue), ...section('TODAY', todayList), ...section('UPCOMING', upcoming), ...section('NO DATE', undated), ...section('DONE', done)];
-      lists.replaceChildren(...(all.length ? all : [el('div', { class: 'empty' }, el('div', { class: 'empty-h' }, 'NOTHING TO DO'), el('div', { class: 'empty-b' }, 'Add a task above, or tell Chat “remind me to … tomorrow at 5pm”.'))]));
+      const all = [...section('Overdue', overdue), ...section('Today', todayList), ...section('Upcoming', upcoming), ...section('No date', undated), ...section('Done', done)];
+      lists.replaceChildren(...(all.length ? all : [el('div', { class: 'empty' }, el('div', { class: 'empty-h' }, 'Nothing to do'), el('div', { class: 'empty-b' }, 'Add a task above, or tell Chat “remind me to … tomorrow at 5pm”.'))]));
     } catch (e) {
       fail(e);
     }

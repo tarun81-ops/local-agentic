@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('lfa', {
   setLaunchAtStartup: (enabled) => ipcRenderer.invoke('app:set-login', enabled),
   openMain: (page) => ipcRenderer.send('main:open', page),
   hideOverlay: () => ipcRenderer.send('overlay:hide'),
+  resizeOverlay: (height) => ipcRenderer.send('overlay:resize', height),
   onNavigate: (cb) => ipcRenderer.on('navigate', (_e, page) => cb(page)),
   // cb gets what was in front when summoned: {app, title, selection}, or null
   onOverlayShown: (cb) => ipcRenderer.on('overlay:shown', (_e, context) => cb(context)),

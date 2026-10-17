@@ -9,11 +9,11 @@ import { el, fileName, notice } from './common.js';
 export function openRemind(path, name = fileName(path)) {
   const dialog = el('dialog', { class: 'study-dialog', 'aria-label': `Remind me about ${name}` });
   const text = el('input', { type: 'text', class: 'field', value: `Review ${name} tomorrow 9am`, 'aria-label': 'What and when' });
-  const go = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'NEXT');
-  const close = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'CLOSE');
+  const go = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Next');
+  const close = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Close');
   const stage = el('div', { class: 'study-stage', 'aria-live': 'polite' });
   dialog.append(
-    el('div', { class: 'study-head' }, el('div', { class: 'section-h' }, el('h2', {}, `REMIND ME — ${name.toUpperCase()}`)), close),
+    el('div', { class: 'study-head' }, el('div', { class: 'section-h' }, el('h2', {}, `Remind me — ${name}`)), close),
     el('div', { class: 'row-gap' }, text, go),
     stage,
   );
@@ -24,18 +24,18 @@ export function openRemind(path, name = fileName(path)) {
       const p = await api.parseTask(text.value.trim() || `Review ${name}`);
       const title = el('input', { type: 'text', class: 'field', value: p.title, 'aria-label': 'Title' });
       const when = el('input', { type: 'datetime-local', class: 'field', value: localInput(p.when), 'aria-label': 'Remind at' });
-      const repeat = el('select', { class: 'field', 'aria-label': 'Repeat' }, ['', 'daily', 'weekly', 'monthly'].map((v) => el('option', { value: v }, v ? `REPEAT ${v.toUpperCase()}` : 'NO REPEAT')));
+      const repeat = el('select', { class: 'field', 'aria-label': 'Repeat' }, ['', 'daily', 'weekly', 'monthly'].map((v) => el('option', { value: v }, v ? `Repeat ${v}` : 'No repeat')));
       repeat.value = p.repeat || '';
       stage.append(
         actionCard({
-          title: 'SET REMINDER FOR THIS FILE',
+          title: 'Set reminder for this file',
           lines: [`File: ${name}`, ...(p.confidence === 'date_only' ? ['No time was given, so 9:00 was assumed. Check it.'] : [])],
           fields: [title, when, repeat],
           onConfirm: async () => {
             const sec = when.value ? new Date(when.value).getTime() / 1000 : null;
             if (!title.value.trim()) throw new Error('Give it a title.');
             await api.createTask({ title: title.value.trim(), due_at: sec, remind_at: sec, repeat: repeat.value || null, file_path: path });
-            return sec != null ? `REMINDER SET FOR ${whenText(sec).toUpperCase()}` : 'TASK ADDED';
+            return sec != null ? `Reminder set for ${whenText(sec)}` : 'Task added';
           },
           onCancel: async () => dialog.close(),
         }),

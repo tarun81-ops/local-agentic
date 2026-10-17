@@ -51,14 +51,15 @@ export function fileName(path) {
   return String(path).split(/[\\/]/).pop();
 }
 
-export function swatch(path, size = 'md') {
+export function swatch(path, size = 'md', folder = false) {
+  if (folder) return el('div', { class: `swatch swatch-${size} tone-yellow`, 'aria-hidden': 'true' }, 'DIR');
   const ext = fileName(path).split('.').pop().toLowerCase();
   const [label, tone] = TYPES[ext] || [ext.slice(0, 3).toUpperCase(), 'ink'];
   return el('div', { class: `swatch swatch-${size} tone-${tone}`, 'aria-hidden': 'true' }, label);
 }
 
 export function locLabel(kind, no) {
-  return { page: `P. ${no}`, part: `PART ${no}`, slide: `SLIDE ${no}`, sheet: `SHEET ${no}`, image: 'IMAGE' }[kind] || `${kind} ${no}`;
+  return { page: `p. ${no}`, part: `part ${no}`, slide: `slide ${no}`, sheet: `sheet ${no}`, image: 'image' }[kind] || `${kind} ${no}`;
 }
 
 export function locWords(kind, no) {

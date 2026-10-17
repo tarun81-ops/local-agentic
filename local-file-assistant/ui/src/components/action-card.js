@@ -25,10 +25,10 @@ export function whenText(sec, allDay = false) {
  *          onConfirm returns the success message; throwing shows the error and lets the user try again.
  *          onUndo (optional) adds an UNDO button once the action has run.
  */
-export function actionCard({ title, lines = [], fields = [], confirmLabel = 'CONFIRM', onConfirm, onCancel, onUndo }) {
+export function actionCard({ title, lines = [], fields = [], confirmLabel = 'Confirm', onConfirm, onCancel, onUndo }) {
   const status = el('div', { class: 'action-card-status', role: 'status' });
   const confirm = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, confirmLabel);
-  const cancel = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'CANCEL');
+  const cancel = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Cancel');
   const card = el(
     'div',
     { class: 'action-card' },
@@ -46,13 +46,13 @@ export function actionCard({ title, lines = [], fields = [], confirmLabel = 'CON
   confirm.addEventListener('click', async () => {
     confirm.disabled = cancel.disabled = true;
     try {
-      settle((await onConfirm()) || 'DONE');
+      settle((await onConfirm()) || 'Done');
       if (onUndo) {
-        const undo = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'UNDO');
+        const undo = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Undo');
         undo.addEventListener('click', async () => {
           undo.disabled = true;
           try {
-            status.textContent = (await onUndo()) || 'UNDONE';
+            status.textContent = (await onUndo()) || 'Undone';
             undo.remove();
           } catch (e) {
             status.textContent = e.message;
@@ -69,7 +69,7 @@ export function actionCard({ title, lines = [], fields = [], confirmLabel = 'CON
   cancel.addEventListener('click', async () => {
     cancel.disabled = confirm.disabled = true;
     await onCancel?.().catch(() => {});
-    settle('CANCELLED');
+    settle('Cancelled');
   });
   return card;
 }

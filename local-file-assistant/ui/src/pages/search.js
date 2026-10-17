@@ -3,18 +3,20 @@ import { openRemind } from '../components/remind.js';
 import { openStudy } from '../components/study.js';
 import { badge, el, highlight, locLabel, notice, swatch } from '../components/common.js';
 
-const MATCH = { both: ['KEYWORD + SEMANTIC', 'blue'], keyword: ['KEYWORD', 'outline'], semantic: ['SEMANTIC', 'outline'] };
+const MATCH = { both: ['Keyword + semantic', 'blue'], keyword: ['Keyword', 'outline'], semantic: ['Semantic', 'outline'], name: ['File name', 'outline'] };
 
 export function resultRow(row, terms, onOpen) {
-  const [label, tone] = MATCH[row.match] || MATCH.keyword;
+  // Find results (overlay) have no search-match kind and may have no page; show only what is known.
+  const [label, tone] = MATCH[row.match] || [null, null];
+  const loc = row.loc_kind ? badge(locLabel(row.loc_kind, row.loc_no)) : '';
   return el(
     'button',
     { type: 'button', class: 'result-row', onclick: () => onOpen(row) },
-    swatch(row.path),
+    swatch(row.path, 'md', row.is_folder),
     el(
       'div',
       { class: 'result-body' },
-      el('div', { class: 'result-line' }, el('span', { class: 'result-name' }, row.name), badge(locLabel(row.loc_kind, row.loc_no)), badge(label, tone)),
+      el('div', { class: 'result-line' }, el('span', { class: 'result-name' }, row.name), loc, label ? badge(label, tone) : '', row.is_folder ? badge('Folder', 'outline') : ''),
       el('div', { class: 'result-path' }, row.path),
       el('div', { class: 'result-snippet' }, highlight(row.snippet || '', terms)),
     ),
@@ -26,11 +28,11 @@ export function render(container, { prefill, onCollectionsChanged } = {}) {
   const input = el('input', { id: 'search-input', type: 'search', placeholder: 'Search your indexed files…', autocomplete: 'off' });
   const meta = el('div', { class: 'page-meta' });
   const results = el('div', { class: 'results' });
-  const saveBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm', hidden: true }, 'SAVE THIS SEARCH');
+  const saveBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm', hidden: true }, 'Save this search');
   const saveBox = el('div', { class: 'row-gap' }, saveBtn);
   const saved = el('div');
   container.replaceChildren(
-    el('header', { class: 'page-head' }, el('div', {}, el('h1', { class: 'page-title' }, 'SEARCH'), el('div', { class: 'page-sub' }, 'KEYWORD + SEMANTIC, RANKED TOGETHER')), meta),
+    el('header', { class: 'page-head' }, el('div', {}, el('h1', { class: 'page-title' }, 'Search'), el('div', { class: 'page-sub' }, 'Keyword + semantic, ranked together')), meta),
     el('div', { class: 'page-body' }, el('div', { class: 'search-bar' }, input), saveBox, saved, results),
   );
 
@@ -45,7 +47,7 @@ export function render(container, { prefill, onCollectionsChanged } = {}) {
       saved.replaceChildren(
         ...(collections.length
           ? [
-              el('div', { class: 'mem-group' }, 'SAVED SEARCHES'),
+              el('div', { class: 'mem-group' }, 'Saved searches'),
               ...collections.map((c) =>
                 el(
                   'div',
@@ -54,8 +56,8 @@ export function render(container, { prefill, onCollectionsChanged } = {}) {
                   el(
                     'div',
                     { class: 'mem-actions' },
-                    el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => useCollection(c) }, 'RUN'),
-                    el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-pressed': String(c.pinned), onclick: () => api.updateCollection(c.id, { pinned: !c.pinned }).then(() => { onCollectionsChanged?.(); loadSaved(); }) }, c.pinned ? 'PINNED' : 'PIN'),
+                    el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => useCollection(c) }, 'Run'),
+                    el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-pressed': String(c.pinned), onclick: () => api.updateCollection(c.id, { pinned: !c.pinned }).then(() => { onCollectionsChanged?.(); loadSaved(); }) }, c.pinned ? 'Pinned' : 'Pin'),
                     el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Delete ${c.name}`, onclick: () => api.deleteCollection(c.id).then(() => { onCollectionsChanged?.(); loadSaved(); }) }, 'DELETE'),
                   ),
                 ),
@@ -74,8 +76,8 @@ export function render(container, { prefill, onCollectionsChanged } = {}) {
 
   saveBtn.addEventListener('click', () => {
     const name = el('input', { type: 'text', class: 'field', maxlength: 60, value: input.value.trim().slice(0, 60), 'aria-label': 'Name for this search' });
-    const ok = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'SAVE');
-    const cancel = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => saveBox.replaceChildren(saveBtn) }, 'CANCEL');
+    const ok = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Save');
+    const cancel = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => saveBox.replaceChildren(saveBtn) }, 'Cancel');
     ok.addEventListener('click', () =>
       api.createCollection({ name: name.value, query: input.value.trim(), root }).then(
         () => { saveBox.replaceChildren(notice('Saved, and pinned in the sidebar.'), saveBtn); onCollectionsChanged?.(); },
@@ -98,13 +100,20 @@ export function render(container, { prefill, onCollectionsChanged } = {}) {
       return;
     }
     saved.replaceChildren();
-    meta.textContent = 'SEARCHING…';
+    meta.textContent = 'Searching…';
     try {
       const data = await api.search(q, root);
       if (mine !== seq) return;
-      meta.textContent = `${data.results.length} RESULTS · ${(data.ms / 1000).toFixed(2)}S${data.semantic ? '' : ' · KEYWORD ONLY'}`;
+      meta.textContent = `${data.results.length} results · ${(data.ms / 1000).toFixed(2)}s${data.semantic ? '' : ' · keyword only'}`;
+      const byName = (data.name_matches || []).map((r) => ({ ...r, match: 'name', snippet: (r.why || []).join(' · ') }));
+      const nameBlock = byName.length
+        ? [el('div', { class: 'mem-group' }, data.results.length ? 'Files with similar names' : 'No text matched, but these file names sound alike'), ...byName.map((r) => el('div', { class: 'result-wrap' }, resultRow(r, [], open)))]
+        : [];
       results.replaceChildren(
-        ...(data.results.length ? data.results.map((r) => el('div', { class: 'result-wrap' }, resultRow(r, data.terms, open), el('div', { class: 'result-study' }, el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Remind me about ${r.name}`, onclick: () => openRemind(r.path, r.name) }, 'REMIND ME'), el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Study ${r.name}`, onclick: () => openStudy(r.path, r.name) }, 'STUDY')))) : [notice('No matches. Check the folder is added on the Index page, or try other words.')]),
+        ...(data.results.length || byName.length ? [] : [notice('No matches. Check the folder is added on Settings → Files & PC access, or try other words.')]),
+        ...nameBlock.filter(() => !data.results.length),
+        ...(data.results.length ? data.results.map((r) => el('div', { class: 'result-wrap' }, resultRow(r, data.terms, open), el('div', { class: 'result-study' }, el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Remind me about ${r.name}`, onclick: () => openRemind(r.path, r.name) }, 'Remind me'), el('button', { type: 'button', class: 'btn btn-outline btn-sm', 'aria-label': `Study ${r.name}`, onclick: () => openStudy(r.path, r.name) }, 'Study')))) : []),
+        ...nameBlock.filter(() => data.results.length),
       );
     } catch (e) {
       if (mine === seq) {

@@ -7,31 +7,24 @@
 <title>Local File Assistant overlay</title>
 </head>
 <body class="overlay">
-  <div id="panel" role="dialog" aria-label="Search or ask about your files">
-      <div class="overlay-input">
-        <div class="mark mark-overlay" aria-hidden="true"><div></div></div>
-        <input id="query" type="text" autocomplete="off" spellcheck="false" aria-label="Search or ask" role="combobox" aria-autocomplete="list" aria-controls="overlay-body" aria-expanded="false">
-        <button type="button" id="pin" class="chip chip-btn" aria-pressed="false" title="Keep this window open when you click elsewhere">PIN</button>
-        <div class="chip">ESC</div>
+  <!-- A slim see-through strip. It grows downward only while it has results or an answer to show. -->
+  <div id="panel" role="dialog" aria-label="Find, ask or attach your files">
+    <div class="overlay-input ov-strip">
+      <div class="mark-overlay" id="mascot-slot" aria-hidden="true"></div>
+      <input id="query" type="text" autocomplete="off" spellcheck="false" aria-label="Find, ask or attach" role="combobox" aria-autocomplete="list" aria-controls="overlay-body" aria-expanded="false">
+      <div class="ov-seg" role="tablist" aria-label="What to do">
+        <button type="button" class="tab" role="tab" data-mode="search" aria-selected="true">Find</button>
+        <button type="button" class="tab" role="tab" data-mode="ask" aria-selected="false">Ask</button>
+        <button type="button" class="tab" role="tab" data-mode="attach" aria-selected="false">Attach</button>
       </div>
-      <div class="rule"></div>
-      <div id="context-chip" class="context-chip" hidden></div>
-      <div class="overlay-tabs">
-        <div class="tabs" role="tablist">
-          <button type="button" class="tab" role="tab" data-mode="search" aria-selected="true">SEARCH</button>
-          <button type="button" class="tab" role="tab" data-mode="ask" aria-selected="false">ASK</button>
-          <button type="button" class="tab" role="tab" data-mode="attach" aria-selected="false">ATTACH</button>
-          <button type="button" class="tab" role="tab" data-mode="organize" aria-selected="false">ORGANIZE</button>
-          <div class="chip" id="tab-hint" aria-hidden="true">TAB &rarr; ASK</div>
-        </div>
-        <div class="overlay-status"><select id="overlay-style" class="mini-select" aria-label="Answer style for this question"><option value="">STYLE</option><option value="concise">CONCISE</option><option value="detailed">DETAILED</option><option value="study">STUDY</option><option value="simple">SIMPLE</option></select><span class="status-dot"></span><span id="overlay-status" role="status" aria-live="polite">LOCAL — READY</span></div>
-      </div>
-      <div id="overlay-body" aria-live="polite"></div>
-      <div id="overlay-footer" class="overlay-footer" hidden>
-        <div>↑↓ NAVIGATE &nbsp;&nbsp; ↵ OPEN &nbsp;&nbsp; TAB ASK AI</div>
-        <div>ESC TO CLOSE</div>
-      </div>
-      <div class="overlay-note">100% LOCAL — NOTHING LEAVES THIS DEVICE</div>
+      <button type="button" id="pin" class="ov-icon" aria-pressed="false" aria-label="Keep open" title="Keep open when you click elsewhere"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3z"/><line x1="12" y1="13" x2="12" y2="20"/></svg></button>
+    </div>
+    <div id="context-chip" class="context-chip" hidden></div>
+    <div id="overlay-body" aria-live="polite"></div>
+    <div id="overlay-footer" class="overlay-footer">
+      <span class="overlay-status"><span class="status-dot"></span><span id="overlay-status" role="status" aria-live="polite">Ready</span></span>
+      <span id="overlay-keys">↑↓ choose · ↵ open · Tab switch · Esc close</span>
+    </div>
   </div>
   <script type="module" src="/src/overlay.js"></script>
 </body>

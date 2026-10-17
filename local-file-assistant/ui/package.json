@@ -7,14 +7,16 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "npm run build:web && electron .",
+    "predev": "node scripts/free-dev-lock.js",
     "dev": "concurrently -k -n vite,electron \"vite\" \"electron . --dev\"",
     "build:web": "vite build",
-    "build:backend": "powershell -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1",
-    "build": "npm run build:web && npm run build:backend && electron-builder --win nsis"
+    "build:backend": "node -e \"require('child_process').execSync(process.platform==='win32'?'powershell -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1':'bash ../scripts/build-backend.sh',{stdio:'inherit'})\"",
+    "build": "npm run build:web && npm run build:backend && electron-builder --win nsis",
+    "build:linux": "npm run build:web && npm run build:backend && electron-builder --linux AppImage deb"
   },
   "build": {
-    "appId": "com.munshi.app",
-    "productName": "Munshi",
+    "appId": "com.local-file-assistant.app",
+    "productName": "Local File Assistant",
     "files": [
       "electron/**/*",
       "dist/**/*",
@@ -37,6 +39,16 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "maintainer": "Tarun Verma <tarunverma0119@gmail.com>",
+      "synopsis": "Ask questions about your own files, privately and offline"
     }
   },
   "dependencies": {

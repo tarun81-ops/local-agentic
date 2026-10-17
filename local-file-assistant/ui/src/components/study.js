@@ -8,11 +8,11 @@ import { el, fileName, locWords, notice } from './common.js';
  */
 export function openStudy(path, name = fileName(path)) {
   const dialog = el('dialog', { class: 'study-dialog', 'aria-label': `Study ${name}` });
-  const kind = el('select', { class: 'field field-mono', 'aria-label': 'Card type' }, el('option', { value: 'flashcards' }, 'FLASHCARDS'), el('option', { value: 'quiz' }, 'QUIZ'));
+  const kind = el('select', { class: 'field field-mono', 'aria-label': 'Card type' }, el('option', { value: 'flashcards' }, 'Flashcards'), el('option', { value: 'quiz' }, 'Quiz'));
   const count = el('input', { type: 'number', min: 5, max: 15, value: 8, class: 'shortcut-input', 'aria-label': 'How many cards (5 to 15)' });
-  const go = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'GENERATE');
-  const exportBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm', hidden: true }, 'EXPORT CSV');
-  const close = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'CLOSE');
+  const go = el('button', { type: 'button', class: 'btn btn-ink btn-sm' }, 'Generate');
+  const exportBtn = el('button', { type: 'button', class: 'btn btn-outline btn-sm', hidden: true }, 'Export CSV');
+  const close = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Close');
   const stage = el('div', { class: 'study-stage', 'aria-live': 'polite' });
   let items = [];
   let known = new Set();
@@ -20,7 +20,7 @@ export function openStudy(path, name = fileName(path)) {
   let shown = false;
 
   dialog.append(
-    el('div', { class: 'study-head' }, el('div', { class: 'section-h' }, el('h2', {}, `STUDY — ${name.toUpperCase()}`)), close),
+    el('div', { class: 'study-head' }, el('div', { class: 'section-h' }, el('h2', {}, `Study — ${name}`)), close),
     el('div', { class: 'row-gap' }, kind, count, go, exportBtn),
     stage,
   );
@@ -37,19 +37,19 @@ export function openStudy(path, name = fileName(path)) {
     if (!items.length) return;
     if (known.size === items.length) {
       stage.replaceChildren(
-        el('div', { class: 'empty-h' }, 'ALL CARDS KNOWN'),
-        el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => { known = new Set(); at = 0; shown = false; draw(); } }, 'START OVER'),
+        el('div', { class: 'empty-h' }, 'All cards known'),
+        el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => { known = new Set(); at = 0; shown = false; draw(); } }, 'Start over'),
       );
       return;
     }
     const card = items[at];
     const quiz = kind.value === 'quiz';
-    const src = card.loc_kind ? el('div', { class: 'quiet' }, `SOURCE: ${locWords(card.loc_kind, card.loc_no)}`) : '';
-    const reveal = el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => { shown = !shown; draw(); } }, shown ? 'HIDE' : quiz ? 'REVEAL ANSWER' : 'FLIP');
-    const markKnown = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => { known.add(at); shown = false; next(); draw(); } }, 'I KNOW THIS');
-    const skip = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => { shown = false; next(); draw(); } }, 'NEXT');
+    const src = card.loc_kind ? el('div', { class: 'quiet' }, `Source: ${locWords(card.loc_kind, card.loc_no)}`) : '';
+    const reveal = el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => { shown = !shown; draw(); } }, shown ? 'Hide' : quiz ? 'Reveal answer' : 'Flip');
+    const markKnown = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => { known.add(at); shown = false; next(); draw(); } }, 'I know this');
+    const skip = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => { shown = false; next(); draw(); } }, 'Next');
     stage.replaceChildren(
-      el('div', { class: 'quiet' }, `CARD ${at + 1} OF ${items.length} · ${known.size} KNOWN`),
+      el('div', { class: 'quiet' }, `Card ${at + 1} of ${items.length} · ${known.size} known`),
       el('div', { class: 'study-card' }, el('div', { class: 'study-front' }, card.front), shown ? el('div', { class: 'study-back' }, card.back) : ''),
       src,
       el('div', { class: 'row-gap' }, reveal, markKnown, skip),

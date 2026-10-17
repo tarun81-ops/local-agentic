@@ -12,18 +12,22 @@ import { ask } from './components/chat-log.js';
 import { micButton, readAloud, speak } from './components/mic.js';
 import { badge, el, fmtBytes, notice, swatch } from './components/common.js';
 import { resultRow } from './pages/search.js';
+import { mascot, setMood } from './components/mascot.js';
 
 applyCached();
 
 const input = document.getElementById('query');
 const body = document.getElementById('overlay-body');
-const footer = document.getElementById('overlay-footer');
 const status = document.getElementById('overlay-status');
-const tabHint = document.getElementById('tab-hint');
 const pin = document.getElementById('pin');
-const styleSel = document.getElementById('overlay-style');
+const keys = document.getElementById('overlay-keys');
+const panel = document.getElementById('panel');
+const strip = document.querySelector('.ov-strip');
+const foot = document.getElementById('overlay-footer');
 const chipBox = document.getElementById('context-chip');
 const tabs = [...document.querySelectorAll('.tab')];
+const lumi = mascot({ size: 26 });
+document.getElementById('mascot-slot').replaceChildren(lumi);
 
 let mode = 'search';
 let seq = 0;
@@ -35,32 +39,31 @@ let canInsert = false; // an answer can be pasted back (something was captured)
 
 const MODES = ['search', 'ask', 'attach'];
 const PLACEHOLDER = {
-  search: 'Search your files, or press Tab to ask…',
+  search: 'Find a file — e.g. last month’s bill',
   ask: 'Ask a question about your files…',
-  attach: 'What does the form ask for? e.g. resume, ID proof…',
+  attach: 'What does the form need? e.g. resume…',
 };
 
 function setMode(next) {
   mode = next;
   tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
   input.placeholder = PLACEHOLDER[mode];
-  tabHint.textContent = `TAB → ${MODES[(MODES.indexOf(mode) + 1) % MODES.length].toUpperCase()}`;
-  footer.firstElementChild.textContent = mode === 'attach' ? '↑↓ NAVIGATE   ↵ COPY PATH   DRAG A FILE INTO THE PAGE' : '↑↓ NAVIGATE   ↵ OPEN   TAB ASK AI';
+  keys.textContent = { search: '↑↓ choose · ↵ open · Tab switch · Esc close', ask: '↵ ask · Tab switch · Esc close', attach: 'Drag a file into the page · ↵ copy path · Esc close' }[mode];
 }
 
 // ATTACH: find the document a form field wants, then drag it from here into the page's upload box.
 function attachRow(r) {
   const row = el('div', { class: 'result-row attach-row', draggable: r.sensitive ? null : 'true' });
   const sub = [fmtBytes(r.size), new Date(r.mtime * 1000).toLocaleDateString()].join(' · ');
-  const tag = r.sensitive ? badge('ASKS EVERY TIME', 'red-outline') : '';
+  const tag = r.sensitive ? badge('Asks every time', 'red-outline') : '';
   const confirmBtn = r.sensitive
     ? el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: (e) => {
         e.stopPropagation();
         window.lfa.allowDrag([r.path], false);
         row.draggable = true;
         confirmBtn.remove();
-        tag.textContent = 'CONFIRMED';
-      } }, 'ATTACH ANYWAY')
+        tag.textContent = 'Confirmed';
+      } }, 'Attach anyway')
     : '';
   row.append(
     swatch(r.path),
@@ -74,7 +77,7 @@ function attachRow(r) {
     e.preventDefault(); // Electron starts the real, native drag
     window.lfa.startDrag(r.path);
   });
-  row.addEventListener('click', () => navigator.clipboard.writeText(r.path).then(() => (status.textContent = 'PATH COPIED'), () => {}));
+  row.addEventListener('click', () => navigator.clipboard.writeText(r.path).then(() => (status.textContent = 'Path copied'), () => {}));
   return row;
 }
 
@@ -85,17 +88,15 @@ async function runAttach() {
   if (!q) {
     window.lfa.allowDrag([]);
     body.replaceChildren();
-    footer.hidden = true;
     return;
   }
   try {
     const { results } = await api.formsSuggest({ label: q, pageTitle: context?.title });
     if (mine !== seq || mode !== 'attach') return;
     window.lfa.allowDrag(results.filter((r) => !r.sensitive).map((r) => r.path));
-    status.textContent = `${results.length} FILES`;
+    status.textContent = `${results.length} file${results.length === 1 ? '' : 's'}`;
     body.replaceChildren(...(results.length ? results.map(attachRow) : [notice('No matching files. Try other words, like the type of document.')]));
     markOptions();
-    footer.hidden = false;
   } catch (e) {
     if (mine === seq) body.replaceChildren(notice(e.message, 'error'));
   }
@@ -110,7 +111,7 @@ function renderChip() {
   if (!context) return chipBox.replaceChildren();
   const from = [appName(context.app), context.title].filter(Boolean).join(' — ');
   chipBox.replaceChildren(
-    el('div', { class: 'context-from' }, 'FROM: ', from),
+    el('div', { class: 'context-from' }, 'From: ', from),
     context.selection ? el('div', { class: 'context-sel' }, context.selection.slice(0, 200)) : '',
     el('button', { type: 'button', class: 'context-x', 'aria-label': 'Don’t use this context', onclick: () => { context = null; renderChip(); input.focus(); } }, '✕'),
   );
@@ -118,6 +119,7 @@ function renderChip() {
 
 function reset(ctx) {
   aborter?.abort();
+  setMood(lumi, 'idle');
   convId = null;
   context = ctx?.app ? ctx : null;
   canInsert = Boolean(context);
@@ -125,7 +127,6 @@ function reset(ctx) {
   input.value = '';
   body.replaceChildren();
   markOptions();
-  footer.hidden = true;
   setMode(context?.selection ? 'ask' : 'search'); // text selected: the likely question is "about this"
   input.focus();
 }
@@ -136,20 +137,21 @@ async function runSearch() {
   const mine = ++seq;
   if (!q) {
     body.replaceChildren();
-    footer.hidden = true;
     return;
   }
   try {
-    const data = await api.search(q);
+    // Find: describe the file, get it back from names, dates and types on the PC (no stored text needed).
+    const data = await api.find(q);
     if (mine !== seq || mode !== 'search') return;
-    status.textContent = `${data.results.length} RESULTS · ${(data.ms / 1000).toFixed(2)}S`;
+    status.textContent = `${data.results.length} result${data.results.length === 1 ? '' : 's'} · ${(data.ms / 1000).toFixed(2)}s`;
+    const terms = data.understood?.words || [];
+    const rows = data.results.map((r) => ({ ...r, loc_kind: r.loc?.[0], loc_no: r.loc?.[1], snippet: r.snippet || `${r.folder} · ${r.modified}` }));
     body.replaceChildren(
-      ...(data.results.length
-        ? data.results.slice(0, document.body.classList.contains('overlay-compact') ? 4 : undefined).map((r) => resultRow(r, data.terms, (row) => api.open(row.path, input.value.trim()).then(() => window.lfa.hideOverlay()).catch(() => {})))
-        : [notice('No matches in your indexed files.')]),
+      ...(rows.length
+        ? rows.slice(0, document.body.classList.contains('overlay-compact') ? 4 : undefined).map((r) => resultRow(r, terms, (row) => api.findOpen(row.path, input.value.trim()).then(() => window.lfa.hideOverlay()).catch(() => {})))
+        : [notice(data.pc_access ? 'No matching files. Try a word from the file name.' : 'Turn on PC access in Settings → Files & PC access so I can see your files.')]),
     );
     markOptions();
-    footer.hidden = false;
   } catch (e) {
     if (mine === seq) body.replaceChildren(notice(e.message, 'error'));
   }
@@ -158,11 +160,11 @@ async function runSearch() {
 function addActions(turn) {
   if (!turn.answer || turn.error || turn.noResults) return;
   const note = el('span', { class: 'action-status', role: 'status' });
-  const copy = el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => navigator.clipboard.writeText(turn.answer).then(() => (note.textContent = 'COPIED'), () => (note.textContent = 'COPY FAILED')) }, 'COPY');
+  const copy = el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: () => navigator.clipboard.writeText(turn.answer).then(() => (note.textContent = 'Copied'), () => (note.textContent = 'Copy failed')) }, 'Copy');
   const insert = canInsert
     ? el('button', { type: 'button', class: 'btn btn-ink btn-sm', onclick: async () => {
-        if (!(await window.lfa.insertText(turn.answer))) note.textContent = 'COULDN’T INSERT — COPIED TO CLIPBOARD';
-      } }, 'INSERT')
+        if (!(await window.lfa.insertText(turn.answer))) note.textContent = 'Couldn’t insert — copied to clipboard';
+      } }, 'Insert')
     : '';
   turn.box.append(el('div', { class: 'answer-actions' }, insert, copy, note));
 }
@@ -174,15 +176,16 @@ async function runAsk() {
   aborter = new AbortController();
   input.value = '';
   input.placeholder = 'Ask a follow-up…';
-  footer.hidden = true;
-  status.textContent = 'LOCAL — ANSWERING';
+  status.textContent = 'Answering…';
+  setMood(lumi, 'thinking');
   body.replaceChildren();
   markOptions();
-  const turn = await ask({ log: body, message, conversationId: convId, mode: 'auto', context, style: styleSel.value, signal: aborter.signal, opts: { sourcesHeading: true } });
+  const turn = await ask({ log: body, message, conversationId: convId, mode: 'auto', context,  signal: aborter.signal, opts: { sourcesHeading: true } });
   if (turn.conversation) convId = turn.conversation.id;
   addActions(turn);
   if (readAloud.get() && turn.answer && !turn.error && !turn.noResults) speak(turn.answer).catch(() => {});
-  status.textContent = 'LOCAL — READY';
+  status.textContent = 'Ready';
+  setMood(lumi, 'idle');
 }
 
 // Results form a listbox driven from the input (combobox pattern), so screen readers announce
@@ -233,7 +236,6 @@ input.addEventListener('keydown', (e) => {
     timer = null;
     setMode(MODES[(MODES.indexOf(mode) + 1) % MODES.length]);
     body.replaceChildren();
-    footer.hidden = true;
     if (input.value.trim()) ({ search: runSearch, ask: runAsk, attach: runAttach })[mode]();
   } else if (e.key === 'ArrowDown' && mode !== 'ask') {
     e.preventDefault();
@@ -263,13 +265,16 @@ tabs.forEach((t) =>
     }
     setMode(t.dataset.mode);
     body.replaceChildren();
-    footer.hidden = true;
     input.focus();
   }),
 );
 
 // Voice: the mic button, or the voice shortcut (which opens the panel and starts listening).
 const mic = micButton({
+  onState: (s) => {
+    input.placeholder = s === 'recording' ? 'Listening… just pause when you’re done' : s === 'working' ? 'Turning speech into text…' : PLACEHOLDER[mode];
+    panel.classList.toggle('is-listening', s === 'recording');
+  },
   onText: (text) => {
     setMode('ask');
     input.value = text;
@@ -277,6 +282,7 @@ const mic = micButton({
   },
   onError: (message) => body.replaceChildren(notice(message, 'error')),
 });
+mic.button.classList.add('ov-mic');
 pin.before(mic.button);
 window.lfa.onVoiceToggle(() => {
   setMode('ask');
@@ -294,9 +300,29 @@ window.lfa.onOverlayShown((ctx) => {
   reset(ctx);
 });
 
-waitForBackend({ onWaiting: () => (status.textContent = 'STARTING…') }).then((up) => {
+waitForBackend({ onWaiting: () => (status.textContent = 'Starting…') }).then((up) => {
   if (up) loadAppearance();
-  status.textContent = up ? 'LOCAL — READY' : 'BACKEND NOT RUNNING';
+  status.textContent = up ? 'Ready' : 'Backend not running';
 });
+// ---------- strip sizing ----------
+// Collapsed: just the strip. With results, an answer or a captured selection, the window grows down
+// to fit them (main caps the height; past that the body scrolls).
+const MARGIN = 24; // the see-through gap around the card (12px each side)
+let fitQueued = false;
+function fit() {
+  if (fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(() => {
+    fitQueued = false;
+    const open = body.childElementCount > 0 || !chipBox.hidden;
+    panel.classList.toggle('is-open', open);
+    const wanted = strip.offsetHeight + (open ? (chipBox.hidden ? 0 : chipBox.offsetHeight + 8) + body.scrollHeight + foot.offsetHeight + 2 : 0) + MARGIN;
+    window.lfa.resizeOverlay?.(wanted);
+  });
+}
+new MutationObserver(fit).observe(body, { childList: true, subtree: true, characterData: true });
+new MutationObserver(fit).observe(chipBox, { attributes: true, childList: true });
+
 setMode('search');
+fit();
 input.focus();
