@@ -4,7 +4,6 @@ import pytest
 
 from app.core.file_ops import file_mover
 from app.core.file_ops.paths import PathNotAllowed, inside_roots
-from app.core.llm.organizer import clean_folder, propose_plan
 
 
 def test_move_and_undo_batch(tmp_path):
@@ -42,31 +41,3 @@ def test_inside_roots_blocks_escape(tmp_path):
         inside_roots("/etc/passwd", [str(root)])
 
 
-@pytest.mark.parametrize("bad", ["", "/abs", "C:/Windows", "../up", "a/../../b", "."])
-def test_clean_folder_rejects_unsafe(bad):
-    assert clean_folder(bad) is None
-
-
-def test_plan_finds_duplicates_and_junk_without_the_model():
-    files = [
-        {"path": "/r/a.pdf", "size": 1, "hint": ""},
-        {"path": "/r/copy of a.pdf", "size": 1, "hint": ""},
-        {"path": "/r/notes.txt.bak", "size": 1, "hint": ""},
-        {"path": "/r/invoice.pdf", "size": 1, "hint": "Invoice total"},
-    ]
-    dups = [[{"path": "/r/a.pdf", "mtime": 1}, {"path": "/r/copy of a.pdf", "mtime": 2}]]
-
-    def fake_model(candidates, model):
-        assert [c["path"] for c in candidates] == ["/r/a.pdf", "/r/invoice.pdf"]
-        return [
-            {"path": "/r/invoice.pdf", "folder": "Finance/Invoices"},
-            {"path": "/r/invented.pdf", "folder": "X"},
-            {"path": "/r/a.pdf", "folder": "../../escape"},
-        ]
-
-    plan = propose_plan("/r", files, dups, ask_model=fake_model)
-    ops = {(a.op, a.path, a.to) for a in plan.actions}
-    assert ("delete", "/r/copy of a.pdf", None) in ops
-    assert ("delete", "/r/notes.txt.bak", None) in ops
-    assert ("move", "/r/invoice.pdf", str(Path("/r") / "Finance" / "Invoices" / "invoice.pdf")) in ops  # destinations use the OS separator
-    assert plan.dropped_invalid == 2

@@ -1,15 +1,19 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.config import settings
-from app.core import indexer
-from app.core.file_ops import file_mover
-from app.core.file_ops.paths import PathNotAllowed, inside_roots, path_problem, same_file_key
+from app.core import indexer, known_folders, pc_access, tidy
+from app.core.file_ops import file_mover, manager
+from app.core.file_ops.paths import PathNotAllowed, same_file_key
 from app.core.file_ops.safe_delete import trash
-from app.core.llm.organizer import propose_plan
+from app.core.parsers import PARSERS
 from app.db import sqlite_fts
-from app.models.organize import ApplyRequest, OrganizeAction, OrganizePlan, PlanRequest, UndoRequest
+from app.models.organize import TIDY_CHECKS, ApplyRequest, OrganizePlan, TidyRequest, UndoRequest
 
 router = APIRouter(prefix="/organize", tags=["organize"])
 
@@ -22,70 +26,132 @@ def _roots() -> list[str]:
         conn.close()
 
 
-@router.post("/plan")
-def plan(req: PlanRequest) -> OrganizePlan:
-    """Proposes a plan only. Nothing on disk changes here."""
-    roots = _roots()
-    root = req.root or (roots[0] if len(roots) == 1 else None)
-    if root is None or root not in roots:
-        raise HTTPException(status_code=400, detail="Choose one of your indexed folders to organize.")
-    conn = sqlite_fts.connect(settings.db_path)
-    try:
-        files = sqlite_fts.list_files(conn, root)
-        hints = sqlite_fts.first_texts(conn, root)
-        for f in files:
-            f["hint"] = hints.get(f["path"], "")
-        dups = sqlite_fts.duplicate_groups(conn, root)
-    finally:
-        conn.close()
-    try:
-        return propose_plan(root, files, dups)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"The local model couldn't make a plan: {exc}") from exc
+# Tidy-up works on these everyday folders even when they aren't indexed (Downloads is the usual mess).
+TIDY_FOLDERS = ("downloads", "desktop")
 
 
-def _validate(actions: list[OrganizeAction], roots: list[str]) -> tuple[list[tuple], list[str]]:
-    """Checks every action before any runs. Returns (resolved actions, problems)."""
-    resolved, problems = [], []
-    sources: set[str] = set()
-    targets: set[str] = set()
-    for a in actions:
+def _tidy_folders() -> list[dict]:
+    rows = []
+    for key in TIDY_FOLDERS:
+        path = known_folders.locate(key)
+        if path is not None:
+            rows.append({"key": key, "label": known_folders.COMMON[key][0], "path": str(path)})
+    return rows
+
+
+def _allowed_roots() -> list[str]:
+    """Where approved actions may touch files: the indexed folders plus the tidy folders."""
+    return _roots() + [r["path"] for r in _tidy_folders()]
+
+
+@router.get("/tidy/folders")
+def tidy_folders():
+    """Folders Tidy-up can work on: Downloads and Desktop first, then the indexed folders."""
+    rows = _tidy_folders()
+    have = {same_file_key(Path(r["path"])) for r in rows}
+    for root in _roots():
+        if same_file_key(Path(root)) not in have:
+            rows.append({"key": None, "label": Path(root).name or root, "path": root})
+    return {"folders": rows}
+
+
+@router.post("/tidy")
+def tidy_plan(req: TidyRequest) -> OrganizePlan:
+    """A cleanup plan from names, sizes, dates and hashes only (no model). Nothing on disk changes here."""
+    if req.folder is None:
+        folder = known_folders.locate("downloads")
+        if folder is None:
+            raise HTTPException(status_code=404, detail="Couldn't find your Downloads folder. Pick a folder instead.")
+    else:
         try:
-            if Path(a.path).is_symlink():
-                # Moving a link would really move (or trash) whatever it points at.
-                raise ValueError(f"is a link or shortcut, not a file: {a.path}")
-            src = inside_roots(a.path, roots)
-            if not src.is_file():
-                raise ValueError(f"no longer exists: {a.path}")
-            if same_file_key(src) in sources:
-                raise ValueError(f"listed twice: {a.path}")
-            sources.add(same_file_key(src))
-            dst = None
-            if a.op == "move":
-                if not a.to:
-                    raise ValueError(f"no destination for {a.path}")
-                dst = inside_roots(a.to, roots)
-                problem = path_problem(dst)
-                if problem:
-                    raise ValueError(problem)
-                # Case-insensitive, as on Windows: "Finance/a.pdf" and "finance/A.pdf" collide.
-                if dst.exists() or same_file_key(dst) in targets:
-                    raise ValueError(f"destination already taken: {a.to}")
-                targets.add(same_file_key(dst))
-            resolved.append((a, src, dst))
-        except (PathNotAllowed, ValueError) as exc:
-            problems.append(str(exc))
-    return resolved, problems
+            folder = manager.allowed(req.folder, _allowed_roots())
+        except PathNotAllowed as exc:
+            raise HTTPException(status_code=400, detail=f"Tidy-up can't work there: {exc}") from exc
+        if same_file_key(folder) in {same_file_key(Path(d).resolve()) for d in pc_access.config()["drives"]}:
+            raise HTTPException(status_code=400, detail="Pick a folder, not a whole drive.")
+    checks = [c for c in req.checks if c in TIDY_CHECKS]
+    if not checks:
+        raise HTTPException(status_code=400, detail="Pick at least one thing to look for.")
+    try:
+        return tidy.propose(folder, large_bytes=max(1, req.large_mb) * tidy.MB, old_days=max(1, req.old_days), checks=checks)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _validate(actions, roots: list[str]):
+    """The checks every change goes through (also used by chat's move_file tool)."""
+    return manager.check_batch(actions, roots)
+
+
+@router.get("/places")
+def places():
+    """Quick places for Move & delete: Desktop, Downloads, Documents... and the PC access drives."""
+    return {"places": manager.places(), "pc_access": pc_access.enabled()}
+
+
+@router.get("/browse")
+def browse(path: str, hidden: bool = False):
+    """One folder's files and sub-folders (nothing is read, only listed)."""
+    try:
+        return manager.browse(path, _allowed_roots(), show_hidden=hidden)
+    except PathNotAllowed as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+class _PathBody(BaseModel):
+    path: str
+
+
+def _shown(path: str) -> Path:
+    # "notes.txt:x.exe" is an NTFS stream inside a file, and its suffix hides what it is; real names have no ":".
+    if ":" in Path(path).name:
+        raise HTTPException(status_code=400, detail=f"Not a file or folder name: {Path(path).name}")
+    try:
+        p = manager.allowed(path, _allowed_roots())
+    except PathNotAllowed as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"No longer there: {path}")
+    return p
+
+
+@router.post("/open")
+def open_item(body: _PathBody):
+    """Opens a file in its app, or a folder in File Explorer. Programs, scripts and shortcuts are never
+    opened from here (that would run them); the page shows them in File Explorer instead."""
+    p = _shown(body.path)
+    if p.is_file() and manager.is_runnable(p):
+        raise HTTPException(status_code=400, detail=f"{p.name} is a program or script, so it isn't opened from here. Use Show in Explorer.")
+    if sys.platform == "win32":
+        os.startfile(p)  # noqa: S606 - checked above: a path this page may show, not a typed command
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(p)])  # noqa: S603
+    return {"opened": str(p)}
+
+
+@router.post("/reveal")
+def reveal_item(body: _PathBody):
+    """Opens the item's folder in File Explorer with the item selected."""
+    p = _shown(body.path)
+    if sys.platform == "win32":
+        subprocess.Popen(f'explorer.exe /select,"{p}"')  # noqa: S603 - path checked above
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(p.parent)])  # noqa: S603
+    return {"revealed": str(p)}
 
 
 @router.post("/apply")
 def apply(req: ApplyRequest):
-    """Only called after the user approves actions from /plan. All actions are checked first;
-    if any is invalid, nothing is applied. Moves are logged and can be undone as one batch;
-    deletes go to the Recycle Bin."""
+    """Runs actions the user approved (a Tidy-up plan, or Move & delete). Every action is checked first;
+    if any is invalid, nothing is changed. Moves, copies and new folders are logged and can be undone as
+    one batch; deletes go to the Recycle Bin."""
     if not req.actions:
         raise HTTPException(status_code=400, detail="No actions selected.")
-    resolved, problems = _validate(req.actions, _roots())
+    resolved, problems = manager.check_batch(req.actions, _allowed_roots())
     if problems:
         raise HTTPException(status_code=400, detail={"message": "Nothing was changed.", "problems": problems})
 
@@ -93,17 +159,26 @@ def apply(req: ApplyRequest):
     results = []
     for action, src, dst in resolved:
         try:
-            if action.op == "move":
+            if action.op == "mkdir":
+                file_mover.make_dir(dst, settings.data_dir, batch)
+            elif action.op in ("move", "rename"):
+                was_file = src.is_file()
                 file_mover.move(src, dst, settings.data_dir, batch)
-                indexer.remove_file(src, settings.db_path, settings.vector_db_dir)
-                indexer.index_file(dst, settings.db_path, settings.vector_db_dir)
+                if was_file:
+                    indexer.remove_file(src, settings.db_path, settings.vector_db_dir)
+                    if dst.suffix.lower() in PARSERS:  # installers, zips and videos have nothing to index
+                        indexer.index_file(dst, settings.db_path, settings.vector_db_dir)
+            elif action.op == "copy":
+                file_mover.copy(src, dst, settings.data_dir, batch)
             else:
+                was_file = src.is_file()
                 trash(src)
                 file_mover.record_trash(src, settings.data_dir, batch)
-                indexer.remove_file(src, settings.db_path, settings.vector_db_dir)
-            results.append({"op": action.op, "path": str(src), "to": str(dst) if dst else None, "ok": True})
+                if was_file:
+                    indexer.remove_file(src, settings.db_path, settings.vector_db_dir)
+            results.append({"op": action.op, "path": str(src or dst), "to": str(dst) if dst and src else None, "ok": True})
         except Exception as exc:
-            results.append({"op": action.op, "path": str(src), "to": str(dst) if dst else None, "ok": False, "error": str(exc)})
+            results.append({"op": action.op, "path": str(src or dst), "to": str(dst) if dst and src else None, "ok": False, "error": str(exc)})
     return {"batch": batch, "results": results}
 
 
@@ -115,9 +190,11 @@ def undo(req: UndoRequest):
     if results is None:
         raise HTTPException(status_code=404, detail="Nothing to undo.")
     for r in results:
-        if r["ok"]:
+        # Only a file moved back changes what the index knows; copies and new folders were never indexed.
+        if r["ok"] and r.get("op", "move") == "move" and r["to"] and Path(r["to"]).is_file():
             indexer.remove_file(r["from"], settings.db_path, settings.vector_db_dir)
-            indexer.index_file(Path(r["to"]), settings.db_path, settings.vector_db_dir)
+            if Path(r["to"]).suffix.lower() in PARSERS:
+                indexer.index_file(Path(r["to"]), settings.db_path, settings.vector_db_dir)
     return {"results": results}
 
 

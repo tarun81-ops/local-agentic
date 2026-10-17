@@ -29,6 +29,8 @@ def name_problem(part: str) -> str | None:
     """Why a single file/folder name can't be created on Windows, or None if it's fine."""
     if not part or part in (".", ".."):
         return "empty name"
+    if "/" in part or "\\" in part:
+        return f'"{part}" can\'t contain \\ or / (a name, not a path)'
     if _BAD_CHARS.search(part):
         return f'"{part}" contains a character Windows doesn\'t allow (< > : " | ? *)'
     if part.endswith((" ", ".")):
