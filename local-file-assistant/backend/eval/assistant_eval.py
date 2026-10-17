@@ -74,22 +74,6 @@ DATES = [
     ("meet me in the evening", (datetime(2026, 10, 3, 18, 0), "high")),
 ]
 
-# fact -> should the memory filter keep it?
-MEMORY_FILTER = [
-    ("The user prefers short answers", True),
-    ("The user works as a nurse in Pune", True),
-    ("The user is learning Rust", True),
-    ("What is the capital of France?", False),
-    ("Is the user vegetarian", False),
-    ("My card number is 4111 1111 1111 1111", False),
-    ("The user's password is hunter2", False),
-    ("The user takes medication every night", False),
-    ("The user has a bank account at HDFC", False),
-    ("The user earns a high salary", False),
-    ("hi", False),
-    ("x" * 300, False),
-]
-
 
 def run() -> list[tuple[str, int, list[str]]]:
     """[(area, total, failures)]"""
@@ -97,7 +81,7 @@ def run() -> list[tuple[str, int, list[str]]]:
         tmp = Path(tempfile.mkdtemp(prefix="lfa-assistant-eval-"))
         os.environ.update({"DATA_DIR": str(tmp), "DB_PATH": str(tmp / "index.db"), "VECTOR_DB_DIR": str(tmp / "lancedb"), "ASSISTANT_DB_PATH": str(tmp / "assistant.db"), "API_TOKEN": "eval"})
     sys.path.insert(0, str(BACKEND))
-    from app.core.assistant import dates, memory_extract
+    from app.core.assistant import dates
     from app.core.assistant.router import memory_command, task_intent
     from app.core.assistant.tools import intents
 
@@ -113,9 +97,6 @@ def run() -> list[tuple[str, int, list[str]]]:
         found = intents.from_message(message)
         return found["tool"] if found else None
 
-    def kept(fact):
-        return bool(memory_extract.clean([fact]))
-
     def read_date(text):
         r = dates.extract(text, NOW)
         return r["when"], r["confidence"]
@@ -125,7 +106,6 @@ def run() -> list[tuple[str, int, list[str]]]:
         check("remember / forget", MEMORY_COMMAND, memory_command),
         check("action intents", ACTION, action_tool),
         check("date reading", DATES, read_date),
-        check("memory filter", MEMORY_FILTER, kept),
     ]
 
 

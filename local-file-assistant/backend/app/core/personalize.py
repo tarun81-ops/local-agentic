@@ -35,7 +35,6 @@ DEFAULTS: dict = {
     "perf_unload_minutes": None,  # None = follow the profile; 0 = never unload the model
     "perf_min_free_ram_mb": None,  # None = follow the profile / .env
     "appearance": dict(APPEARANCE),
-    "memory_review": True,
     "folder_profiles": {},
     "inbox_folders": [],
 }

@@ -24,6 +24,12 @@ def touch() -> None:
         _last_used = time.monotonic()
 
 
+def recently_used(seconds: float) -> bool:
+    """True if the chat model was used in the last `seconds` (background work backs off meanwhile)."""
+    with _lock:
+        return _last_used is not None and time.monotonic() - _last_used < seconds
+
+
 def _due(now: float) -> bool:
     limit = personalize.effective("llm_idle_unload_s")
     with _lock:

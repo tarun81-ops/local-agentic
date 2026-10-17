@@ -65,3 +65,51 @@ def test_claim_with_nothing_to_check_is_unchecked_not_verified():
 def test_negated_claim_fails():
     r = verify("The invoice total is not $4,250 (invoice_notes.pdf, page 1).", CHUNKS)
     assert r["citations"][0]["status"] == "failed" and r["citations"][0]["reason"] == "claim negates the source"
+
+
+MARKSHEET = [{"path": r"C:\docs\class 10.pdf", "loc_kind": "page", "loc_no": 1, "text": "CENTRAL BOARD OF SECONDARY EDUCATION Roll No. 12127198 Name of Candidate TARUN VERMA"}]
+
+
+def test_abbreviation_no_does_not_split_the_claim():
+    """Regression: "roll no." ended a sentence, so "Your class 10 roll no." was flagged as uncited."""
+    r = verify("Your class 10 roll no. is 12127198. (class 10.pdf, page 1)", MARKSHEET)
+    assert r["uncited"] == [], r["uncited"]
+    assert r["citations"][0]["status"] == "checked", r
+
+
+def test_no_as_an_abbreviation_is_not_a_negation():
+    chunks = [{"path": "bill.pdf", "loc_kind": "page", "loc_no": 1, "text": "Bill No. 4471 amount Rs. 1,250"}]
+    r = verify("Bill no. 4471 is for Rs. 1,250 (bill.pdf, page 1).", chunks)
+    assert r["all_verified"] and r["uncited"] == [], r
+
+
+def test_titles_and_initials_do_not_split_sentences():
+    chunks = [{"path": "letter.pdf", "loc_kind": "page", "loc_no": 1, "text": "Signed by Dr. A. K. Sharma on 12 May"}]
+    r = verify("It was signed by Dr. A. K. Sharma on 12 May (letter.pdf, page 1).", chunks)
+    assert r["all_verified"] and r["uncited"] == [], r
+
+
+def test_real_negation_still_fails():
+    r = verify("Acme Corp does not owe $4,250 (invoice_notes.pdf, page 1).", CHUNKS)
+    assert r["citations"][0]["reason"] == "claim negates the source", r
+
+
+ROLL_PAGE = ("2101729 0230729 Regn.No. B123/19016/0069 CENTRAL BOARD OF SECONDARY EDUCATION MARKS STATEMENT CUM CERTIFICATE "
+             "2023 SECONDARY SCHOOL EXAMINATION, 2023 This is to certify that TARUN VERMA Roll No. 12127198 Mother's Name "
+             "SUNITA VERMA has achieved scholastic achievements as under. SUBJECT CODE SUBJECT THEORY PRACTICAL TOTAL")
+
+
+def test_excerpt_is_centred_on_the_cited_number():
+    """Regression: the source line showed "2[10]1729…" (a search word inside another number) and not the roll number."""
+    from app.core.llm.verifier import excerpt
+
+    out = excerpt(ROLL_PAGE, "Your class 10 roll no. is 12127198.")
+    assert "Roll No. 12127198" in out and len(out) <= 230
+    assert excerpt("a 2101729 b", "class 10") == ""  # "10" is not found inside 2101729
+    assert excerpt("Total due Rs. 1,240 for Sept", "The bill is Rs. 1240") == "Total due Rs. 1,240 for Sept"
+    assert excerpt(ROLL_PAGE, "nothing to see here") == ""
+
+
+def test_citations_carry_their_claim():
+    r = verify("Acme Corp owes $4,250 (invoice_notes.pdf, page 1).", CHUNKS)
+    assert r["citations"][0]["claim"] == "Acme Corp owes $4,250"

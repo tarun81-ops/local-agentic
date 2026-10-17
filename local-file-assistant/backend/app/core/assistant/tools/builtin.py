@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from app.config import settings
-from app.core import indexer, prefs
+from app.core import indexer, pc_access, prefs
 from app.core.assistant.tools.registry import Tool, ToolError, register
 from app.core.file_ops import file_mover
 from app.core.file_ops.paths import PathNotAllowed, inside_roots, name_problem
@@ -16,8 +16,39 @@ from app.core.file_ops.safe_delete import trash
 from app.db import sqlite_fts
 
 # Opening these would run a program, not show a document.
-BLOCKED_EXT = {".exe", ".bat", ".cmd", ".com", ".msi", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".scr", ".lnk", ".reg", ".hta", ".jar", ".cpl", ".dll", ".msc", ".url"}
-DEFAULT_APPS = {"notepad": "notepad.exe", "calculator": "calc.exe", "paint": "mspaint.exe", "file explorer": "explorer.exe"}
+BLOCKED_EXT = {".exe", ".bat", ".cmd", ".com", ".msi", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".scr", ".lnk", ".reg", ".hta", ".jar", ".cpl", ".dll", ".msc", ".url",
+               # macro-enabled Office files, help/installer/disk-image/script types: with PC access the model can name any file on the drive
+               ".docm", ".xlsm", ".pptm", ".dotm", ".xlam", ".xll", ".chm", ".iso", ".img", ".vhd", ".appx", ".msix", ".msp", ".inf", ".pif", ".scf",
+               ".ws", ".wsh", ".py", ".pyw", ".psm1", ".sh", ".application", ".gadget", ".library-ms", ".settingcontent-ms",
+               # Linux: launchers, packages and self-running installers
+               ".desktop", ".appimage", ".deb", ".rpm", ".run", ".bin", ".bash", ".zsh", ".pl", ".flatpakref", ".snap"}
+_WINDOWS_APPS = {"notepad": "notepad.exe", "calculator": "calc.exe", "paint": "mspaint.exe", "file explorer": "explorer.exe"}
+# Linux: the first one installed wins (GNOME, KDE and XFCE names).
+_LINUX_APPS = {
+    "notepad": ("gnome-text-editor", "gedit", "kate", "kwrite", "mousepad", "xed"),
+    "text editor": ("gnome-text-editor", "gedit", "kate", "kwrite", "mousepad", "xed"),
+    "calculator": ("gnome-calculator", "kcalc", "galculator", "mate-calc"),
+    "paint": ("pinta", "kolourpaint", "drawing"),
+    "file explorer": ("nautilus", "dolphin", "thunar", "nemo", "pcmanfm"),
+    "files": ("nautilus", "dolphin", "thunar", "nemo", "pcmanfm"),
+    "terminal": ("gnome-terminal", "konsole", "xfce4-terminal", "x-terminal-emulator"),
+}
+
+
+def _default_apps() -> dict[str, str]:
+    if sys.platform == "win32":
+        return dict(_WINDOWS_APPS)
+    import shutil
+
+    out = {}
+    for name, candidates in _LINUX_APPS.items():
+        found = next((c for c in candidates if shutil.which(c)), None)
+        if found:
+            out[name] = found
+    return out
+
+
+DEFAULT_APPS = _default_apps()
 
 
 def roots() -> list[str]:
@@ -68,7 +99,10 @@ def _open_path_validate(a: dict) -> dict:
     try:
         path = inside_roots(a["path"], roots() + _allowed_dirs())
     except PathNotAllowed:
-        raise ToolError("I only open files in your indexed folders, Downloads, Desktop or Documents.") from None
+        ok, _why = pc_access.can_read(a["path"])  # PC access (Settings): files on the drives the user switched on
+        if not ok:
+            raise ToolError("I only open files in your indexed folders, Downloads, Desktop or Documents, or on the drives PC access covers.") from None
+        path = Path(a["path"]).resolve()
     if not path.exists():
         raise ToolError(f"It doesn't exist (any more): {path}")
     if path.is_file() and path.suffix.lower() in BLOCKED_EXT:

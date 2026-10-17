@@ -1,7 +1,7 @@
 import pymupdf
 
 from app.core import indexer
-from app.core.search import fts_search, hybrid_ranker, vector_search
+from app.core.search import fts_search, hybrid, vector_search
 from app.db import sqlite_fts, vector_store
 
 
@@ -30,7 +30,7 @@ def test_natural_question_finds_the_invoice(corpus, db_paths):
 def test_hybrid_merge_tags_match_kind():
     fts = [{"path": "a", "chunk_no": 0}, {"path": "b", "chunk_no": 0}]
     vec = [{"path": "b", "chunk_no": 0}, {"path": "c", "chunk_no": 0}]
-    merged = hybrid_ranker.merge(fts, vec)
+    merged = hybrid.merge(fts, vec)
     assert merged[0]["path"] == "b" and merged[0]["match"] == "both"
     assert {r["match"] for r in merged[1:]} == {"keyword", "semantic"}
 

@@ -37,8 +37,9 @@ class FakeWhisper:
     def __init__(self):
         self.heard = None
 
-    def transcribe(self, audio, language=None, beam_size=1, vad_filter=True):
+    def transcribe(self, audio, language=None, **options):
         self.heard = (audio, language)
+        self.options = options
 
         class Seg:
             def __init__(self, t):
@@ -55,9 +56,24 @@ def test_stt_converts_pcm_and_joins_segments(models, monkeypatch):
     _have_stt(models)
     fake = FakeWhisper()
     monkeypatch.setattr(stt, "_load", lambda: fake)
-    assert stt.transcribe(pcm(1), "en") == "hello world"
+    assert stt.transcribe(pcm(1, 16000), "hi") == "hello world"
     audio, lang = fake.heard
-    assert lang == "en" and len(audio) == 16000 and audio.dtype.name == "float32" and abs(audio[0] - 1000 / 32768) < 1e-6
+    assert lang == "hi" and len(audio) == 16000 and audio.dtype.name == "float32" and abs(audio[0] - 16000 / 32768) < 1e-6
+    assert fake.options["beam_size"] == 5 and fake.options["vad_filter"] and stt.HINT in fake.options["initial_prompt"]
+
+
+def test_stt_defaults_to_english_and_lifts_quiet_audio(models, monkeypatch):
+    _have_stt(models)
+    fake = FakeWhisper()
+    monkeypatch.setattr(stt, "_load", lambda: fake)
+    monkeypatch.setattr(stt.prefs, "get", lambda key, default=None: None)
+    stt.transcribe(pcm(1, 1000))  # a quiet recording, no language given
+    audio, lang = fake.heard
+    assert lang == "en"  # not auto-detect: short Hinglish clips were detected as Russian
+    assert abs(float(abs(audio).max()) - 0.5) < 1e-3  # boosted to a normal level
+    monkeypatch.setattr(stt.prefs, "get", lambda key, default=None: "auto" if key == "voice_language" else None)
+    stt.transcribe(pcm(1))
+    assert fake.heard[1] is None  # "auto" still lets Whisper guess
 
 
 def test_stt_refuses_without_a_model_and_ignores_clicks_and_overlong_audio(models, monkeypatch):

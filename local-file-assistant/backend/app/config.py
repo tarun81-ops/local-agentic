@@ -4,9 +4,18 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# %APPDATA%\LocalFileAssistant, e.g. C:\Users\<user>\AppData\Roaming\LocalFileAssistant.
+# Windows: %APPDATA%\LocalFileAssistant, e.g. C:\Users\<user>\AppData\Roaming\LocalFileAssistant.
+# Linux: $XDG_DATA_HOME/LocalFileAssistant, normally ~/.local/share/LocalFileAssistant.
 # Override any of data_dir/db_path/vector_db_dir individually via env vars or .env.
-_DEFAULT_DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LocalFileAssistant"
+def _default_data_dir() -> Path:
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA", Path.home())) / "LocalFileAssistant"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "LocalFileAssistant"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "LocalFileAssistant"
+
+
+_DEFAULT_DATA_DIR = _default_data_dir()
 # The installed app ships its re-ranker next to the frozen backend (scripts\build-backend.ps1).
 _BUNDLED_MODELS = Path(sys.executable).parent / "models"
 _FROZEN = getattr(sys, "frozen", False)
@@ -53,6 +62,14 @@ class Settings(BaseSettings):
     memory_top_k: int = 5
     extract_idle_s: int = 300
 
+    # Retrieval over past conversations (core/assistant/chat_recall.py): exchanges put in the
+    # prompt per reply (0 = off), how close (cosine) a past exchange must be to count, and whether
+    # file answers get them too. Off for file answers by default: a 2B model is sensitive to prompt
+    # length, and file questions should be answered from the files.
+    chat_recall_k: int = 3
+    chat_recall_min_cosine: float = 0.40
+    recall_in_files: bool = False
+
     # Cross-encoder that re-reads the top search results together with the question
     # (core/search/reranker.py). A Hugging Face repo id, fetched once into models_dir; "" = off.
     # models_dir is separate from data_dir so a throwaway index (tests, eval) reuses the models.
@@ -66,6 +83,13 @@ class Settings(BaseSettings):
     # Search ranking learns from the files you open: a habitually opened file may move up at most
     # this many places for a similar search (0 = off). See core/assistant/learning.py.
     open_prior_max_shift: int = 2
+
+    # Names-only mode (the default): the app never stores the text of your files on disk. No folder
+    # indexing, no background reading of the PC, no cache of files read for an answer. Find searches
+    # file names, dates and types; chat reads the file it picked at the moment you ask. Set
+    # STORE_FILE_TEXT=true in backend\.env to bring back the index (faster answers, search inside files,
+    # but it keeps a copy of the text that grows with your files).
+    store_file_text: bool = False
 
     # Describe images with the vision model while indexing (slow on CPU; OCR works without it).
     caption_images: bool = False

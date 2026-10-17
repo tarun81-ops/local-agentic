@@ -1,5 +1,6 @@
 """Per-folder rules: validation, case-insensitive lookup, allowlist and exclusions in a real
 folder, removal from both stores, scan/watcher agreement, caption override, chat style."""
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,7 @@ def test_profile_is_validated_and_normalized(tmp_path):
             personalize.clean_folder_profile(bad)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Linux paths are case-sensitive: Docs and docs are two folders")
 def test_lookup_is_case_insensitive_on_windows(folder):
     personalize.set_folder_profile(folder, {"label": "College", "answer_style": "study"})
     assert personalize.folder_profile(str(folder).lower())["label"] == "College"

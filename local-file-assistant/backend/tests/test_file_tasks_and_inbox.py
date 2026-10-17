@@ -1,4 +1,5 @@
 """Reminders tied to documents, and the opt-in new-file nudge."""
+import sys
 import time
 from datetime import datetime
 
@@ -101,7 +102,8 @@ def test_inbox_folders_are_validated(tmp_path):
     for bad in ([str(tmp_path / "missing")], "Downloads", [5], [str(tmp_path)] * 11):
         with pytest.raises(ValueError):
             personalize.update({"inbox_folders": bad})
-    one = personalize.update({"inbox_folders": [str(tmp_path), str(tmp_path).upper()]})["inbox_folders"]
+    same = str(tmp_path).upper() if sys.platform == "win32" else str(tmp_path)  # case-insensitive on Windows only
+    one = personalize.update({"inbox_folders": [str(tmp_path), same]})["inbox_folders"]
     assert len(one) == 1  # the same folder twice is one
 
 

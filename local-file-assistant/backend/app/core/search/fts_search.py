@@ -29,7 +29,7 @@ def build_match(query: str) -> str | None:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in ts)
 
 
-def search(conn: sqlite3.Connection, query: str, limit: int = 8, root: str | None = None) -> list[dict]:
+def search(conn: sqlite3.Connection, query: str, limit: int = 8, root: str | None = None, skip_roots: list[str] | None = None) -> list[dict]:
     match = build_match(query)
     if match is None:
         return []
@@ -41,6 +41,9 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 8, root: str | Non
     if root:
         sql += "JOIN files f ON f.path = c.path WHERE chunks MATCH ? AND f.root = ? "
         args.append(root)
+    elif skip_roots:  # e.g. whole-PC contents while PC access is off: excluded here so they can't crowd out real hits
+        sql += f"JOIN files f ON f.path = c.path WHERE chunks MATCH ? AND f.root NOT IN ({','.join('?' * len(skip_roots))}) "
+        args += skip_roots
     else:
         sql += "WHERE chunks MATCH ? "
     sql += "ORDER BY score LIMIT ?"

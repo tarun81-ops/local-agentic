@@ -121,7 +121,9 @@ def test_opening_a_file_records_the_search_that_found_it(client, monkeypatch, tm
 
     f = tmp_path / "lease.pdf"
     f.write_text("x")
-    monkeypatch.setattr(routes_files.sqlite_fts, "is_indexed", lambda conn, p: True)
+    from app.core import find_file
+
+    monkeypatch.setattr(find_file, "allowed_to_open", lambda p: True)  # /files/open asks find_file which files may open
     monkeypatch.setattr(routes_files.os, "startfile", lambda p: None, raising=False)
     monkeypatch.setattr(routes_files.subprocess, "Popen", lambda *a, **k: None)
     assert client.post("/files/open", json={"path": str(f), "query": "my lease"}, headers=AUTH).status_code == 200

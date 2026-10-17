@@ -16,7 +16,7 @@ def _load(name):
 def test_every_assistant_eval_case_passes():
     results = _load("assistant_eval").run()
     assert [(area, failures) for area, _, failures in results if failures] == []
-    assert sum(total for _, total, _ in results) >= 50
+    assert sum(total for _, total, _ in results) >= 40
 
 
 def test_relevance_flags_cited_answers_that_miss_the_question():

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "Whole-PC access: how it works",
+  "description": "Guided path through the catalog, safety gate, background reader and file agent.",
+  "steps": [
+    {
+      "file": "backend/app/core/pc_access.py",
+      "line": 1,
+      "title": "Whole-PC access: the idea",
+      "description": "Three tiers. Tier 1 is a names-and-locations catalog (catalog.db). Tier 2 reads file contents in the background into the normal index. Tier 3 reads a few files live to answer one question. Everything is off until the user switches it on, and every safety rule is applied to the crawl AND to every read."
+    },
+    {
+      "file": "backend/app/core/pc_access.py",
+      "line": 39,
+      "title": "What is never entered",
+      "description": "SKIP_DIRS keeps the crawler out of Windows, Program Files, AppData, node_modules, .git and similar. Links and junctions are never followed. Gotcha: names starting with $ are skipped too."
+    },
+    {
+      "file": "backend/app/core/pc_access.py",
+      "line": 134,
+      "title": "Credential files are untouchable",
+      "description": "is_sensitive() matches .ssh, *.pem, *.key, .env, passwords*, .git-credentials and more. It is used by the crawler, by can_read(), and by indexer.is_allowed, so these files are skipped in every folder, not only on PC drives."
+    },
+    {
+      "file": "backend/app/core/pc_access.py",
+      "line": 160,
+      "title": "can_read: the gate for every read",
+      "description": "A path produced by the model is never trusted. It must be a real file (not a link), resolve inside an enabled drive, not be sensitive and not sit in a skipped folder. Called by the file agent, the content worker and open_path."
+    },
+    {
+      "file": "backend/app/core/pc_access.py",
+      "line": 282,
+      "title": "Building the catalog",
+      "description": "scan() walks the drives with scandir, upserts new/changed files by size+mtime (no content read), and drops vanished ones. It runs on the Crawler thread and can be stopped. Changes are found by this periodic rescan (12 h), not live."
+    },
+    {
+      "file": "backend/app/core/pc_access.py",
+      "line": 398,
+      "title": "Finding a file by name",
+      "description": "find() turns words into an FTS5 prefix query: every term must match, then any term. Month names, synonyms (including Hinglish), typo repair from the catalog's own words and file-type or date filters live around here. Terms are stripped to word characters, so there is no query injection."
+    },
+    {
+      "file": "backend/app/core/assistant/file_agent.py",
+      "line": 204,
+      "title": "Tier 3: the bounded file agent",
+      "description": "gather() is understand -> find -> choose -> read, not an open-ended loop, because a 2B model is unreliable over long tool chains. It yields step events the chat shows as 'On this PC: ...'. File names and text are treated as untrusted data."
+    },
+    {
+      "file": "backend/app/api/routes_chat.py",
+      "line": 45,
+      "title": "How chat uses it",
+      "description": "_pc_lookup runs after the router decides what the question is. It emits pc_step events, adds the files it read to the normal result chunks, and returns them so the existing answerer and citation verifier work unchanged."
+    },
+    {
+      "file": "backend/app/db/sqlite_fts.py",
+      "line": 198,
+      "title": "Tier 2 trick: hidden roots",
+      "description": "Each enabled drive is registered with add_root(hidden=True). The existing index, search and citations then work on those files. Gotcha: list_roots, unscanned_roots and root_paths hide them, so they are not shown on the Index page, not rglob-scanned and not watched; root_for still sees them."
+    },
+    {
+      "file": "backend/app/core/pc_content.py",
+      "line": 71,
+      "title": "Roots follow the settings",
+      "description": "sync_roots() makes hidden roots match the enabled drives and forgets a drive that was removed. forget() (line 91) deletes everything read from the drives; both take the same lock as a batch so a forget never races a write."
+    },
+    {
+      "file": "backend/app/core/pc_content.py",
+      "line": 133,
+      "title": "What gets read first",
+      "description": "next_batch picks catalog files not yet read (or changed), your home folders first, documents before images, newest first, 40 at a time. Images only if 'read images' is on. progress() counts the same set for the UI."
+    },
+    {
+      "file": "backend/app/core/pc_content.py",
+      "line": 197,
+      "title": "Staying out of the way",
+      "description": "pause_reason(): the chat model was used in the last 20 s, RAM is low, or the laptop is on battery. The loop (line 272) waits 30 s when paused and 60 s when idle. Gotcha: it deliberately ignores indexer.CANCEL, which the Index page STOP leaves set."
+    },
+    {
+      "file": "backend/app/core/pc_content.py",
+      "line": 348,
+      "title": "Reading one file",
+      "description": "_one re-checks can_read, skips files inside a folder the user added themselves, then calls indexer._index_one with the drive as root. States: indexed, skipped, partial (embedder was down: retried after 15 min), ignored, failed. State is stored in catalog.db content_done so a restart resumes."
+    },
+    {
+      "file": "backend/app/core/search/hybrid.py",
+      "line": 55,
+      "title": "Off means off",
+      "description": "With PC access off, the stored contents stay but are never returned: fts_search excludes the hidden roots in SQL and _drop_hidden filters vector hits before the final cut, so they cannot crowd out results from your own folders."
+    },
+    {
+      "file": "backend/app/api/routes_pc.py",
+      "line": 25,
+      "title": "The settings API",
+      "description": "PUT /pc/settings saves the switch, drives, skip list and the two read toggles; turning on starts the catalog scan and wakes the content worker. POST /pc/forget removes what was read. Like every route it needs the bearer token."
+    },
+    {
+      "file": "backend/app/main.py",
+      "line": 52,
+      "title": "Startup",
+      "description": "At launch the catalog is rescanned if older than 12 h and the content worker starts. It idles by itself while PC access is off, so a fresh install does nothing until the user opts in."
+    },
+    {
+      "file": "ui/src/pages/index.js",
+      "line": 196,
+      "title": "The consent and status panel",
+      "description": "refreshPc() draws the Index page section: off -> SET UP with drives, the never-read list and an 'I understand' switch; on -> scan progress, FILE CONTENTS progress and waiting reason, toggles, skip list, TURN OFF and FORGET WHAT WAS READ."
+    },
+    {
+      "title": "Where to go next",
+      "description": "Run pytest tests\\test_pc_access.py tests\\test_pc_find.py tests\\test_pc_wiring.py tests\\test_pc_content.py. Not yet checked on Windows/Electron with the real model: that is the next real test."
+    }
+  ]
+}

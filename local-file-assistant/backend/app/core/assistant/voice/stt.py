@@ -9,6 +9,8 @@ from app.core.assistant.voice import Lazy, VoiceUnavailable
 SAMPLE_RATE = 16000
 MIN_SECONDS = 0.3  # shorter than this is a click or a bump, not speech
 MAX_SECONDS = 240
+# Words this app hears a lot; Whisper uses them as a spelling hint, not as text to output.
+HINT = "Local File Assistant. Find my file, open the PDF, invoice, resume, marksheet, Downloads folder, remind me, summarize."
 
 _model = Lazy()
 
@@ -31,6 +33,13 @@ def _load():
     return WhisperModel(str(model_dir()), device="cpu", compute_type="int8", local_files_only=True)
 
 
+def _language(language: str | None) -> str | None:
+    """English unless told otherwise. Guessing the language on a few seconds of Hinglish went badly
+    (logs showed 'ru' at 17%), and English letters are how Hinglish is typed anyway. "auto" = guess."""
+    lang = language or prefs.get("voice_language") or "en"
+    return None if lang == "auto" else lang
+
+
 def transcribe(pcm: bytes, language: str | None = None) -> str:
     """Text for a recording; "" for silence or a recording too short to hold speech."""
     if not available():
@@ -41,8 +50,19 @@ def transcribe(pcm: bytes, language: str | None = None) -> str:
     if samples > SAMPLE_RATE * MAX_SECONDS:
         raise VoiceUnavailable(f"That recording is too long (the limit is {MAX_SECONDS // 60} minutes).")
     audio = np.frombuffer(pcm[: samples * 2], dtype="<i2").astype(np.float32) / 32768.0
+    peak = float(np.abs(audio).max()) if audio.size else 0.0
+    if 0 < peak < 0.25:  # a quiet laptop mic: bring speech up to a normal level (at most 20x)
+        audio = audio * min(0.5 / peak, 20.0)
     model = _model.get(_load)
-    segments, _ = model.transcribe(audio, language=language or prefs.get("voice_language") or None, beam_size=1, vad_filter=True)
+    segments, _ = model.transcribe(
+        audio,
+        language=_language(language),
+        beam_size=5,  # 1 was fast but often picked the wrong words; 5 is still well under a second on CPU
+        vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 500},
+        initial_prompt=HINT,
+        condition_on_previous_text=False,
+    )
     text = " ".join(s.text.strip() for s in segments).strip()
     _model.touch()
     return text

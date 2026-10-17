@@ -4,11 +4,12 @@ names or contents."""
 import fnmatch
 import logging
 import mimetypes
+import os
 import re
 from pathlib import Path
 
 from app.config import settings
-from app.core import prefs
+from app.core import pc_access, prefs
 from app.core.search.hybrid import hybrid_search
 from app.db import sqlite_fts
 
@@ -56,6 +57,16 @@ def suggest(label: str, page_title: str = "", accept: str | list[str] | None = N
         files = {f["path"]: f for f in sqlite_fts.list_files(conn)}
     finally:
         conn.close()
+    # Files whole-PC access knows by name. In names-only mode (the default) the index above is empty,
+    # so this list is where the resume or marksheet comes from.
+    if pc_access.enabled():
+        try:
+            for r in pc_access.find(terms, limit=40):
+                if r["path"] not in files:
+                    st = os.stat(r["path"])
+                    files[r["path"]] = {"path": r["path"], "size": st.st_size, "mtime": st.st_mtime}
+        except Exception:  # catalog not built yet, or a file vanished between listing and stat
+            log.info("form suggestion: PC file names skipped")
 
     by_name = []
     for path, f in files.items():

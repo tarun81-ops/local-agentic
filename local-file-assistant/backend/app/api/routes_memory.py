@@ -19,10 +19,9 @@ class Patch(BaseModel):
 
 
 @router.get("")
-def list_memories(q: str = "", status: str = "active"):
-    if status not in ("active", "pending", "all"):
-        raise HTTPException(400, "status must be active, pending or all")
-    return {"memories": memory_store.list_all(q, None if status == "all" else status), "counts": memory_store.counts()}
+def list_memories(q: str = ""):
+    """What the assistant remembers. Facts are added only by "remember that ..." in chat or here."""
+    return {"memories": memory_store.list_all(q, "active"), "counts": memory_store.counts()}
 
 
 @router.post("")
@@ -43,18 +42,6 @@ def patch_memory(mem_id: int, body: Patch):
 @router.delete("/{mem_id}")
 def delete_memory(mem_id: int):
     memory_store.delete(mem_id)
-    return {"ok": True}
-
-
-@router.post("/approve-all")
-def approve_all():
-    return {"approved": memory_store.approve_all()}
-
-
-@router.post("/{mem_id}/approve")
-def approve_memory(mem_id: int):
-    if not memory_store.approve(mem_id):
-        raise HTTPException(404, "No such memory")
     return {"ok": True}
 
 

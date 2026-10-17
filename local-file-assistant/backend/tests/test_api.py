@@ -63,19 +63,17 @@ def test_index_search_organize_undo_flow(client, corpus, monkeypatch):
     paths = [r["path"] for r in found["results"]]
     assert len(paths) == len(set(paths))  # one row per file, though both invoice pages match
 
-    # A duplicate for the plan to find, and a model suggestion for the rest.
+    # Approved changes (as Tidy-up proposes them): a move and a Recycle Bin delete, applied then undone.
     (corpus / "invoice_copy.pdf").write_bytes((corpus / "invoice_notes.pdf").read_bytes())
     _add_and_wait(client, corpus)
-    monkeypatch.setattr(
-        "app.core.llm.organizer._ask_model",
-        lambda candidates, model: [{"path": str(corpus.resolve() / "meeting_notes.docx"), "folder": "Meeting Notes"}],
-    )
-    plan = client.post("/organize/plan", json={"root": str(corpus.resolve())}, headers=AUTH).json()
-    ops = {(a["op"], Path(a["path"]).name) for a in plan["actions"]}  # paths use the OS separator
-    assert ("move", "meeting_notes.docx") in ops
-    assert any(op == "delete" for op, _ in ops)
+    root_path = corpus.resolve()
+    actions = [
+        {"op": "move", "path": str(root_path / "meeting_notes.docx"), "to": str(root_path / "Meeting Notes" / "meeting_notes.docx")},
+        {"op": "delete", "path": str(root_path / "invoice_copy.pdf")},
+    ]
+    assert client.post("/organize/plan", json={"root": str(root_path)}, headers=AUTH).status_code in (404, 405)  # AI plan removed
 
-    applied = client.post("/organize/apply", json={"actions": plan["actions"]}, headers=AUTH).json()
+    applied = client.post("/organize/apply", json={"actions": actions}, headers=AUTH).json()
     assert all(r["ok"] for r in applied["results"]), applied
     assert (corpus / "Meeting Notes" / "meeting_notes.docx").exists()
     assert len(client.trashed) == 1

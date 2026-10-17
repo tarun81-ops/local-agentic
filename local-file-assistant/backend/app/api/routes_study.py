@@ -1,5 +1,6 @@
-"""Flashcards and quizzes from one indexed file. Generated on demand and never stored: the
-user exports what they want to keep."""
+"""Flashcards and quizzes from one file. Generated on demand and never stored: the user exports what
+they want to keep. The file's text comes from the index when it is there, otherwise (names-only mode)
+the file is read from disk right now."""
 import csv
 import io
 import logging
@@ -9,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.core import ram
+from app.core import find_file, ram
 from app.core.llm import client
 from app.db import sqlite_fts
 
@@ -40,6 +41,42 @@ class ExportRequest(BaseModel):
     items: list[dict]
 
 
+def _even_sample(chunks: list[dict], budget: int) -> tuple[list[dict], bool]:
+    """Same rule as the index's file_chunks: whole file if it fits, else chunks spread across it."""
+    total = sum(len(c["text"]) for c in chunks)
+    sampled = total > budget
+    if sampled:
+        per = max(1, budget // max(1, total // len(chunks)))
+        chunks = [chunks[int(i * len(chunks) / per)] for i in range(min(per, len(chunks)))]
+    out, used = [], 0
+    for c in chunks:
+        text = c["text"][: max(0, budget - used)]
+        if not text:
+            break
+        used += len(text)
+        out.append({**c, "text": text})
+    return out, sampled
+
+
+def read_live(path: str, budget: int = BUDGET_CHARS) -> tuple[list[dict], bool]:
+    """The file's text read from disk now, nothing kept. Only files Find could show (PC access on and
+    covering it; never credential-like files)."""
+    from pathlib import Path
+
+    from app.core.parsers import PARSERS
+
+    p = Path(path)
+    parse = PARSERS.get(p.suffix.lower())
+    if parse is None:
+        raise HTTPException(422, "That kind of file can't be read for study (PDF, Word, PowerPoint, Excel or text).")
+    try:
+        chunks = [{"loc_kind": c.loc_kind, "loc_no": int(c.loc_no), "text": c.text} for c in parse(p) if c.text.strip()]
+    except Exception as exc:
+        log.warning("study: could not read the file: %s", type(exc).__name__)
+        raise HTTPException(422, "That file couldn't be read.") from exc
+    return _even_sample(chunks, budget) if chunks else ([], False)
+
+
 def clean_items(raw, chunks: list[dict], count: int) -> list[dict]:
     """Keeps well-formed items only: drops empty and duplicate fronts, caps lengths and count,
     and attaches the source location of the excerpt each item cites (None if it cited none)."""
@@ -65,11 +102,14 @@ def generate(req: StudyRequest):
         raise HTTPException(400, "kind must be flashcards or quiz")
     conn = sqlite_fts.connect(settings.db_path)
     try:
-        if not sqlite_fts.is_indexed(conn, req.path):
-            raise HTTPException(404, "That file isn't in the index (it may have moved).")
-        chunks, sampled = sqlite_fts.file_chunks(conn, req.path, BUDGET_CHARS)
+        indexed = sqlite_fts.is_indexed(conn, req.path)
+        chunks, sampled = sqlite_fts.file_chunks(conn, req.path, BUDGET_CHARS) if indexed else ([], False)
     finally:
         conn.close()
+    if not indexed:
+        if not find_file.allowed_to_open(req.path):
+            raise HTTPException(404, "That file isn't one the app can open (it may have moved, or PC access is off).")
+        chunks, sampled = read_live(req.path)
     if not chunks:
         raise HTTPException(422, "That file has no readable text to study from.")
     if ram.is_low():

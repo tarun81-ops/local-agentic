@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
-from app.core import indexer, personalize
+from app.core import indexer, known_folders, personalize
 from app.core.assistant import learning
 from app.core.watcher import watcher
 from app.db import sqlite_fts
@@ -28,6 +28,16 @@ class PathRequest(BaseModel):
 
 def _conn():
     return sqlite_fts.connect(settings.db_path)
+
+
+NAMES_ONLY = ("This app is set to names only: it doesn't keep copies of file text, so folders aren't indexed. "
+              "Find and chat still work with every file whole-PC access covers. To index folders again, set "
+              "STORE_FILE_TEXT=true in backend\\.env and restart.")
+
+
+def _no_text_store():
+    if not settings.store_file_text:
+        raise HTTPException(status_code=409, detail=NAMES_ONLY)
 
 
 # One index run at a time: a single-user local app, not a job queue.
@@ -82,6 +92,27 @@ def rescan_unscanned() -> list[str]:
     return [str(f) for f in folders]
 
 
+def auto_access_startup() -> list[str]:
+    """Called at startup: gives the app access to Documents, Desktop and Downloads on first launch
+    (and to any on-by-default folder added in a later version), so nothing has to be picked by hand.
+    A folder the user removed is not added again: each is offered once."""
+    keys = known_folders.startup_keys()
+    if not keys:
+        return []
+    conn = _conn()
+    try:
+        added = known_folders.add(keys, conn)
+    finally:
+        conn.close()
+    if added:
+        watcher.refresh()
+        try:
+            _start_index(added)
+        except HTTPException:
+            return []  # a scan is already running; these show as NOT SCANNED and rescan_unscanned picks them up next start
+    return [str(p) for p in added]
+
+
 def _existing_dir(folder: str) -> Path:
     path = Path(folder).expanduser()
     if not path.is_dir():
@@ -115,8 +146,51 @@ def roots():
     return {"roots": rows}
 
 
+class CommonRequest(BaseModel):
+    keys: list[str]
+
+
+class AutoAccessRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/common")
+def common_folders():
+    """Documents, Desktop, Downloads and Pictures on this PC, and which of them are indexed."""
+    conn = _conn()
+    try:
+        roots = sqlite_fts.root_paths(conn)
+    finally:
+        conn.close()
+    return {"enabled": known_folders.enabled(), "folders": known_folders.listing(roots)}
+
+
+@router.post("/common")
+def add_common(req: CommonRequest):
+    """Adds the chosen everyday folders in one go (no folder picker) and scans them."""
+    _no_text_store()
+    conn = _conn()
+    try:
+        added = known_folders.add(req.keys, conn)
+    finally:
+        conn.close()
+    if not added:
+        return {"state": "nothing_new", "added": []}
+    watcher.refresh()
+    _start_index(added)
+    return {"state": "started", "added": [str(p) for p in added]}
+
+
+@router.put("/common/auto")
+def set_auto_access(req: AutoAccessRequest):
+    """Turns on or off adding the everyday folders automatically at launch."""
+    known_folders.set_enabled(req.enabled)
+    return {"enabled": known_folders.enabled()}
+
+
 @router.post("/roots")
 def add_root(req: FolderRequest):
+    _no_text_store()
     folder = _existing_dir(req.folder)
     conn = _conn()
     try:
@@ -159,6 +233,7 @@ def remove_root(req: FolderRequest):
 
 @router.post("/index")
 def start_index(req: FolderRequest):
+    _no_text_store()
     return _start_index([_existing_dir(req.folder)])
 
 
@@ -223,13 +298,12 @@ def list_files(root: str | None = None):
 
 @router.post("/open")
 def open_file(req: PathRequest):
-    """Opens an indexed file in its default app. Only files in the index can be opened, so
-    this can't be used to launch arbitrary programs."""
-    conn = _conn()
-    try:
-        known = sqlite_fts.is_indexed(conn, req.path)
-    finally:
-        conn.close()
+    """Opens a file in its default app: one in the index, or (names-only mode, where chat reads files
+    live) one that whole-PC access covers. Anything else is refused, so this can't be used to launch
+    arbitrary programs."""
+    from app.core import find_file
+
+    known = find_file.allowed_to_open(req.path)
     path = Path(req.path)
     if not known or not path.is_file():
         raise HTTPException(status_code=404, detail="That file isn't in the index (it may have moved).")

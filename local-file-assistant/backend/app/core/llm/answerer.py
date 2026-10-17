@@ -6,7 +6,10 @@ from app.core.llm.client import current_model, get_client
 
 PROMPT = """Answer the question using only the excerpts below. After each fact, cite the excerpt it
 came from by copying that excerpt's label exactly, in round brackets, for example (report.pdf, page 2)
-or (notes.docx, part 1). Never invent a label. If the excerpts don't contain the answer, say so.
+or (notes.docx, part 1). Never invent a label. Use only excerpts that actually answer the question and ignore the rest.
+If none of them answer it, say so in one sentence. Keep the answer short and to the point.
+Talk to the person asking as "you" (never "the user"). Answer only what was asked: don't add facts
+about the person that the question didn't ask for.
 
 {context}
 
@@ -23,7 +26,8 @@ def label(chunk: dict) -> str:
 
 def _messages(question: str, chunks: list[dict], history: list[dict] | None = None, style: str = "") -> list[dict]:
     context = "\n\n".join(f"[{label(c)}]\n{c['text']}" for c in chunks)
-    return [*(history or []), {"role": "user", "content": PROMPT.format(context=context, question=question, style=style)}]
+    return [{"role": "system", "content": prompts.system()}, *(history or []),
+            {"role": "user", "content": PROMPT.format(context=context, question=question, style=style)}]
 
 
 def _stream(messages: list[dict], model: str | None):
@@ -54,7 +58,7 @@ def answer_stream(question: str, chunks: list[dict], history: list[dict] | None 
 
 def chat_stream(message: str, history: list[dict] | None = None, model: str | None = None, style: str = ""):
     """General chat: no excerpts, no citations."""
-    system = f"{prompts.CHAT_BASE} {style}" if style else prompts.CHAT_SYSTEM
+    system = prompts.system(style or prompts.CHAT_RULES)
     return (yield from _stream([{"role": "system", "content": system}, *(history or []), {"role": "user", "content": message}], model))
 
 

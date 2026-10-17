@@ -19,6 +19,7 @@ os.environ.update(
         "AUTO_RESCAN": "false",
         "MIN_FREE_RAM_MB": "0",
         "RERANK_MODEL": "",  # tests that need one stand it in
+        "STORE_FILE_TEXT": "true",  # most tests exercise the index; tests/test_names_only.py turns it off
     }
 )
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

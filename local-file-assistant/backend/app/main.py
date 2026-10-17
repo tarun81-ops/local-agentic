@@ -5,9 +5,10 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import routes_actions, routes_chat, routes_collections, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_personalize, routes_proactive, routes_search, routes_settings, routes_study, routes_tasks, routes_voice
+from app.api import routes_actions, routes_chat, routes_collections, routes_context, routes_conversations, routes_events, routes_files, routes_find, routes_forms, routes_learning, routes_memory, routes_organize, routes_pc, routes_personalize, routes_proactive, routes_search, routes_settings, routes_study, routes_tasks, routes_voice
 from app.config import settings
-from app.core.assistant import memory_extract, scheduler
+from app.core import pc_access, pc_content
+from app.core.assistant import memory_store, scheduler
 from app.core.llm import idle
 from app.core.watcher import watcher
 from app.db import assistant_db
@@ -38,15 +39,23 @@ async def lifespan(app: FastAPI):
     assistant_db.migrate()
     watcher.start()
     idle.start()
-    memory_extract.start()
+    # Memories come only from "remember that ..." in chat. Facts the model used to guess from chats
+    # waited in a review queue as "pending" and were never used; that queue is gone, so clear it.
+    memory_store.drop_pending()
     scheduler.start()
     if settings.auto_rescan:
+        auto = routes_files.auto_access_startup()
+        if auto:
+            logging.getLogger(__name__).info("auto access: added %d common folder(s)", len(auto))
         pending = routes_files.rescan_unscanned()
         if pending:
             logging.getLogger(__name__).info("rebuilding the index for %d folder(s)", len(pending))
+        pc_access.crawler.start_if_stale()  # whole-PC name catalog: only runs if the user switched it on
+        pc_content.worker.start()  # reads file contents of those drives in the background (idles while PC access is off)
     yield
+    pc_content.worker.stop()
+    pc_access.crawler.stop()
     scheduler.stop()
-    memory_extract.stop()
     idle.stop()
     watcher.stop()
 
@@ -69,5 +78,5 @@ def health():
     return {"ok": True}
 
 
-for module in (routes_search, routes_actions, routes_chat, routes_collections, routes_context, routes_conversations, routes_events, routes_files, routes_forms, routes_learning, routes_memory, routes_organize, routes_personalize, routes_proactive, routes_settings, routes_study, routes_tasks, routes_voice):
+for module in (routes_search, routes_actions, routes_chat, routes_collections, routes_context, routes_conversations, routes_events, routes_files, routes_find, routes_forms, routes_learning, routes_memory, routes_organize, routes_pc, routes_personalize, routes_proactive, routes_settings, routes_study, routes_tasks, routes_voice):
     app.include_router(module.router)

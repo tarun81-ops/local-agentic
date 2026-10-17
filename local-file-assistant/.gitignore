@@ -15,3 +15,7 @@ backend/dist/
 *.log
 # Local secrets and generated files
 backend/.env
+
+# local backups and transfer bundles, never committed
+_transfer/
+backend/_before_*/

@@ -27,7 +27,7 @@ _PRONOUN = re.compile(r"\b(it|its|that|this|those|these|they|them|he|she|one|one
 
 def needs_rewrite(message: str) -> bool:
     """A short follow-up ("and the second one?") can't be searched on its own."""
-    return len(message.split()) <= 6 or bool(_PRONOUN.match(message.strip()))
+    return len(message.split()) <= 6 or bool(_PRONOUN.search(message))
 
 
 _REMEMBER = re.compile(r"^\s*(?:please\s+)?remember(?:\s+that)?\s+(.+?)\s*$", re.I | re.S)
@@ -54,3 +54,19 @@ def task_intent(message: str) -> str | None:
     if _TASK.match(message):
         return "task"
     return "event" if _EVENT.match(message) else None
+
+
+# Clean-up requests ("my downloads is a mess") are for the Tidy-up page, not a file search: a search
+# on "mess" finds "mess receipt.pdf" and the answer ends up describing receipts. Kept narrow so file
+# questions still search ("mess fee receipt", "duplicate marksheet").
+_ORGANIZE = re.compile(
+    r"\b(?:(?:is|are|it's|its) (?:a |so |such a )?(?:total |complete |big )?mess|messy|clean ?up|clean (?:my|the)|"
+    r"tidy|declutter|clutter(?:ed)?|organi[sz]e (?:my|the|all)|sort (?:out )?(?:my|the) (?:files|folders?|downloads|desktop)|"
+    r"duplicates|duplicate (?:files|photos|copies)|free up (?:space|storage)|(?:disk|storage|drive|c drive) (?:is )?(?:almost |nearly )?full)\b",
+    re.I,
+)
+
+
+def organize_intent(message: str) -> bool:
+    """True for "my downloads is a mess", "find duplicate files", "free up space"..."""
+    return bool(_ORGANIZE.search(message))

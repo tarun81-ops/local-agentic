@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.core.assistant import conversation
+from app.core.assistant import chat_recall, conversation
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -28,6 +28,13 @@ def create_conversation():
 @router.post("/import")
 def import_conversations(body: Import):
     return {"imported": conversation.import_chats(body.chats)}
+
+
+@router.get("/search")
+def search_conversations(q: str, limit: int = 8):
+    """Past exchanges that match `q` (same retrieval the assistant uses to remember earlier chats)."""
+    hits = chat_recall.recall(q, k=max(1, min(limit, 20)))
+    return {"results": [{"conv_id": h["conv_id"], "title": h["title"], "msg_id": h["msg_id"], "snippet": h["text"][:300], "at": h["created_at"]} for h in hits]}
 
 
 @router.get("/{conv_id}")

@@ -42,7 +42,6 @@ cd backend
 - OCR for images and scanned PDFs: `.venv\Scripts\pip.exe install "rapidocr-onnxruntime>=1.4,<2"`
 - Image captions from the vision model: `CAPTION_IMAGES=true` in `backend\.env` (slow on CPU)
 - Pin exact package versions after a working setup: `scripts\lock-backend.ps1`
-- One-time cleanup of files the app no longer uses: `scripts\cleanup-leftovers.ps1` (Recycle Bin)
 
 ## Installer
 

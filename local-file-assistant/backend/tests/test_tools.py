@@ -24,6 +24,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(builtin, "roots", lambda: [str(root)])
     monkeypatch.setattr(routes_organize, "_roots", lambda: [str(root)])
     monkeypatch.setattr(builtin, "_allowed_dirs", lambda: [])
+    # The same allow-list on every OS (on Linux the defaults depend on which editors are installed).
+    monkeypatch.setattr(builtin, "DEFAULT_APPS", dict(builtin._WINDOWS_APPS))
     monkeypatch.setattr(builtin, "notes_dir", lambda: notes)
     monkeypatch.setattr(builtin, "_open", lambda p: seen["opened"].append(p))
     monkeypatch.setattr(builtin, "_launch", lambda e: seen["launched"].append(e))

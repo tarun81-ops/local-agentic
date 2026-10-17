@@ -2,6 +2,7 @@ import time
 
 from fastapi import APIRouter
 
+from app.core import find_file
 from app.core.search.hybrid import hybrid_search
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -19,5 +20,9 @@ def search(q: str, root: str | None = None, limit: int = 10):
     for r in out["results"]:
         best.setdefault(r["path"], r)
     out["results"] = list(best.values())[:n]
+    try:  # "gunaho ke devata" -> "Gunahon Ka Devta.pdf" even when no text inside matches the spelling
+        out["name_matches"] = find_file.name_matches(q, limit=5, exclude=set(best))
+    except Exception:
+        out["name_matches"] = []
     out["ms"] = round((time.perf_counter() - t0) * 1000)
     return out

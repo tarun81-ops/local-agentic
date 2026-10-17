@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.core.assistant import conversation, memory_extract, memory_store
+from app.core.assistant import conversation, memory_store
 from app.core.assistant.router import memory_command
 from app.db import assistant_db
 from app.main import app
@@ -67,39 +67,6 @@ def test_edit_updates_text_and_keyword_index():
     assert memory_store.recall("Mumbai")[0]["pinned"] and memory_store.recall("Delhi") == []
 
 
-def test_extraction_filters_questions_and_blocked_categories():
-    kept = memory_extract.clean([
-        "The user prefers short answers",
-        "What is the capital of France?",
-        "My card number is 4111 1111 1111 1111",
-        "I take medication every night",
-        "The user's password is hunter2",
-        "hi",
-        42,
-    ])
-    assert kept == ["The user prefers short answers"]
-
-
-def test_extraction_runs_after_idle_once_and_skips_when_ram_is_low(monkeypatch):
-    conv = conversation.create("t")
-    conversation.add_messages(conv["id"], [("user", "I am learning Rust for my side project", {}), ("assistant", "Nice!", {})], at=time.time() - 10_000)
-    calls = []
-    monkeypatch.setattr(memory_extract.client, "llm_json", lambda p, max_tokens=300: calls.append(p) or {"facts": ["The user is learning Rust", "Is this a question?"]})
-    monkeypatch.setattr(memory_extract.ram, "is_low", lambda: True)
-    assert memory_extract.run_once() == 0 and not calls
-    monkeypatch.setattr(memory_extract.ram, "is_low", lambda: False)
-    assert memory_extract.run_once() == 1
-    assert memory_extract.run_once() == 0 and len(calls) == 1  # messages are only read once
-    assert "Rust" in memory_store.list_all()[0]["text"]
-
-
-def test_recent_conversations_are_left_alone(monkeypatch):
-    conv = conversation.create("t")
-    conversation.add_messages(conv["id"], [("user", "I like tea a lot", {}), ("assistant", "ok", {})])
-    monkeypatch.setattr(memory_extract.client, "llm_json", lambda *a, **k: pytest.fail("chat still active"))
-    assert memory_extract.run_once() == 0
-
-
 def test_remember_and_forget_commands_through_chat(client):
     assert memory_command("remember that my cat is called Mia") == ("remember", "my cat is called Mia")
     ev = _events(client.post("/chat", json={"message": "Remember that my cat is called Mia."}, headers=AUTH).text)
@@ -138,82 +105,58 @@ def test_memory_api(client):
     assert client.post("/memory/wipe", headers=AUTH).json() == {"deleted": 1}
 
 
-# ---------- review step: learned facts wait as pending ----------
+# ---------- memories come only from the user: no background guessing, no review queue ----------
 
-@pytest.fixture
-def review(monkeypatch):
-    from app.core import personalize
+def test_nothing_is_learned_from_chats_in_the_background():
+    import app.main as main
 
-    personalize.update({"memory_review": True})
-    yield
-    personalize.update(personalize.DEFAULTS)
-
-
-def _extract(monkeypatch, facts):
+    assert not hasattr(main, "memory_extract")  # the background extraction job is gone
     conv = conversation.create("t")
-    conversation.add_messages(conv["id"], [("user", "I am learning Rust for my side project", {}), ("assistant", "Nice!", {})], at=time.time() - 10_000)
-    monkeypatch.setattr(memory_extract.client, "llm_json", lambda p, max_tokens=300: {"facts": facts})
-    monkeypatch.setattr(memory_extract.ram, "is_low", lambda: False)
-    return memory_extract.run_once()
+    conversation.add_messages(conv["id"], [("user", "I am asking about my class 10 marksheet", {}), ("assistant", "ok", {})], at=time.time() - 10_000)
+    assert memory_store.list_all() == []
 
 
-def test_learned_facts_are_pending_and_never_recalled_until_approved(review, monkeypatch):
-    assert _extract(monkeypatch, ["The user is learning Rust"]) == 1
-    [m] = memory_store.list_all()
-    assert m["status"] == "pending"
-    assert memory_store.list_all(status="active") == [] and len(memory_store.list_all(status="pending")) == 1
-    assert memory_store.recall("learning Rust") == []
-    assert memory_store.forget("learning Rust") is None  # forget only touches active facts
-    assert memory_store.approve(m["id"])
-    assert [x["text"] for x in memory_store.recall("learning Rust")] == ["The user is learning Rust"]
+def test_old_review_queue_is_cleared_at_startup():
+    memory_store.add("user's job or project information is not mentioned", status="pending")  # left by an old version
+    kept = memory_store.add("I study ETE in Raipur")
+    with TestClient(app, base_url="http://127.0.0.1:8756"):  # app startup
+        pass
+    assert [m["text"] for m in memory_store.list_all()] == [kept["text"]]
+    assert memory_store.counts() == {"active": 1, "pending": 0}
 
 
-def test_review_off_saves_active(monkeypatch):
-    from app.core import personalize
-
-    personalize.update({"memory_review": False})
-    try:
-        assert _extract(monkeypatch, ["The user is learning Rust"]) == 1
-    finally:
-        personalize.update(personalize.DEFAULTS)
-    assert memory_store.list_all()[0]["status"] == "active"
-
-
-def test_remember_command_stays_active_even_with_review_on(review, client):
-    memory_store.add("seed", status="pending")
+def test_remember_command_saves_straight_away(client):
     client.post("/chat", json={"message": "remember that I study ETE in Raipur"}, headers=AUTH)
     assert any(m["text"].startswith("I study ETE") for m in memory_store.list_all(status="active"))
 
 
-def test_pending_duplicates_are_not_added_twice(review):
-    memory_store.add("I like chess", status="pending")
-    assert memory_store.add("I like chess") is None
+def test_memory_api_has_no_review_endpoints(client):
+    m = memory_store.add("Likes tea")
+    assert client.post(f"/memory/{m['id']}/approve", headers=AUTH).status_code in (404, 405)
+    assert client.post("/memory/approve-all", headers=AUTH).status_code in (404, 405)
+    got = client.get("/memory", headers=AUTH).json()
+    assert [x["text"] for x in got["memories"]] == ["Likes tea"] and got["counts"] == {"active": 1, "pending": 0}
 
 
-def test_sensitive_facts_never_become_even_pending(review, monkeypatch):
-    sensitive = [
-        "The user has diabetes and takes medication",
-        "The user earns a salary of 40000 a month",
-        "The user's ID number is 1234 5678 9012",
-        "The user's national ID is on file",
-        "The user's password is hunter2",
-        "The user suffers from depression",
-    ]
-    assert _extract(monkeypatch, sensitive + ["The user prefers short answers"]) == 1
-    assert [m["text"] for m in memory_store.list_all()] == ["The user prefers short answers"]
+def test_file_answers_get_no_memories_and_show_the_cited_line(client, monkeypatch):
+    """Regression: "class 10 roll no" was answered "The user is in Class 10…" from an old "user is in
+    class 12" memory. File answers come from files only; the source line is the one with the number."""
+    from app.api import routes_chat
+    from tests.test_verifier import ROLL_PAGE
 
+    memory_store.add("user is in class 12")
+    chunk = {"path": "C:/d/class 10.pdf", "name": "class 10.pdf", "loc_kind": "page", "loc_no": 1, "match": "both",
+             "snippet": ROLL_PAGE[:120], "text": ROLL_PAGE}
+    monkeypatch.setattr(routes_chat, "hybrid_search", lambda q, root=None, limit=6: {"results": [chunk], "semantic": True})
+    seen = []
 
-def test_review_api(client, review):
-    a = memory_store.add("Likes tea", status="pending")
-    b = memory_store.add("Likes chess", status="pending")
-    c = memory_store.add("Likes rain", status="pending")
-    got = client.get("/memory?status=pending", headers=AUTH).json()
-    assert len(got["memories"]) == 3 and got["counts"] == {"active": 0, "pending": 3}
-    assert client.get("/memory", headers=AUTH).json()["memories"] == []
-    assert client.get("/memory?status=bogus", headers=AUTH).status_code == 400
-    assert client.post(f"/memory/{a['id']}/approve", headers=AUTH).status_code == 200
-    assert client.post("/memory/99999/approve", headers=AUTH).status_code == 404
-    client.delete(f"/memory/{b['id']}", headers=AUTH)  # rejecting is delete
-    assert client.post("/memory/approve-all", headers=AUTH).json() == {"approved": 1}
-    assert {m["text"] for m in client.get("/memory", headers=AUTH).json()["memories"]} == {"Likes tea", "Likes rain"}
-    assert c["id"]
+    def answer(question, chunks, history=None, model=None, style=""):
+        seen.append(question)
+        yield "Your roll no. is 12127198 (class 10.pdf, page 1)."
+        return False
+
+    monkeypatch.setattr(routes_chat, "answer_stream", answer)
+    ev = _events(client.post("/chat", json={"message": "class 10 roll no", "mode": "files"}, headers=AUTH).text)
+    assert "class 12" not in seen[0] and not any(k == "memory_used" for k, _ in ev)
+    cit = ev[-1][1]["citations"][0]
+    assert "Roll No. 12127198" in cit["snippet"] and cit["status"] == "checked"

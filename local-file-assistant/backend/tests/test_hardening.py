@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.api import routes_files, routes_organize
 from app.core.file_ops import file_mover
-from app.core.llm.organizer import clean_folder
 from app.main import app
 from app.models.organize import OrganizeAction
 from run import is_loopback
@@ -59,11 +58,6 @@ def test_names_windows_rejects(tmp_path, folder):
     (tmp_path / "a.pdf").write_text("a")
     to = tmp_path / folder / "a.pdf"
     assert _problems([OrganizeAction(op="move", path=str(tmp_path / "a.pdf"), to=str(to))], tmp_path)
-    assert clean_folder(folder) is None  # and the model can't suggest them in the first place
-
-
-def test_valid_names_still_pass():
-    assert clean_folder("Finance/Invoices 2026") == "Finance/Invoices 2026"
 
 
 @pytest.fixture

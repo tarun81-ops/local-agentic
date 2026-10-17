@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from app.core import personalize, ram
+from app.config import settings
+from app.core import pc_access, personalize, ram
 from app.core.parsers import PARSERS, image_parser
 from app.core.search.vector_search import embed
 from app.db import sqlite_fts, vector_store
@@ -34,6 +35,8 @@ def is_allowed(path: Path, root: Path, profile: dict) -> bool:
     """The folder's own rules: a file-type allowlist (empty = all) and exclusion patterns, matched
     against the path inside the folder and against each folder or file name on the way.
     Both the folder scan and the watcher go through here (the watcher via index_file), so they agree."""
+    if pc_access.is_sensitive(path):  # credential-like files and folders are never indexed, in any folder
+        return False
     exts = profile.get("extensions") or []
     if exts and path.suffix.lower() not in exts:
         return False
@@ -112,6 +115,8 @@ def embed_text(path: Path, root: Path, text: str) -> str:
 
 
 def _index_one(path: Path, root: Path, run: _Run, profile: dict | None = None) -> str:
+    if not settings.store_file_text:  # every way into the index ends here: names-only stores no text
+        return "skipped"
     stat = path.stat()
     # Cheap check first: hashing reads the whole file, which dominates rescans of big folders.
     if sqlite_fts.file_unchanged(run.conn, path, stat.st_size, stat.st_mtime):
@@ -182,10 +187,12 @@ def index_folder(
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict:
     """Indexes new/changed files under folder and removes index entries for files that
-    no longer exist there."""
+    no longer exist there. Does nothing in names-only mode (settings.store_file_text off)."""
+    counts = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0, "keyword_only": 0}
+    if not settings.store_file_text:
+        return counts
     folder = folder.resolve()
     run = _Run(db_path, vector_db_dir)
-    counts = {"seen": 0, "indexed": 0, "skipped": 0, "failed": 0, "removed": 0, "keyword_only": 0}
     cancelled = False
     try:
         sqlite_fts.add_root(run.conn, folder)
@@ -225,7 +232,9 @@ def index_folder(
 
 def index_file(path: Path, db_path: Path, vector_db_dir: Path, root: Path | None = None) -> str:
     """Indexes one file (used by the folder watcher). root defaults to the indexed folder
-    that contains the file."""
+    that contains the file. Does nothing in names-only mode."""
+    if not settings.store_file_text:
+        return "ignored"
     run = _Run(db_path, vector_db_dir)
     try:
         if root is None:

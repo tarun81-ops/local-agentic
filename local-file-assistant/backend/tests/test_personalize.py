@@ -22,7 +22,7 @@ def _reset():
 def test_defaults():
     got = personalize.get_all()
     assert got["answer_style"] == "concise" and got["language"] == "auto" and got["cite_pages"] is True
-    assert got["verifier_strict"] == "normal" and got["memory_review"] is True
+    assert got["verifier_strict"] == "normal" and "memory_review" not in got
 
 
 def test_partial_update_keeps_the_rest():
@@ -75,9 +75,11 @@ def test_old_signatures_still_work(monkeypatch):
     seen = {}
     monkeypatch.setattr(answerer, "_stream", lambda messages, model: (seen.setdefault("m", messages), (yield "ok"))[1])
     list(answerer.chat_stream("hi"))
-    assert seen["m"][0]["content"] == prompts.CHAT_SYSTEM
+    assert seen["m"][0]["role"] == "system" and seen["m"][0]["content"].startswith(prompts.ROLE)
+    assert prompts.CHAT_RULES in seen["m"][0]["content"]
     seen.clear()
     list(answerer.answer_stream("q", CHUNKS))
+    assert seen["m"][0]["role"] == "system" and seen["m"][0]["content"].startswith(prompts.ROLE)
     assert seen["m"][-1]["content"].endswith("Question: q\n")
 
 

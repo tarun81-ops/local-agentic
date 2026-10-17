@@ -38,7 +38,8 @@ def _row(r) -> dict:
 
 def add(text: str, kind: str = "fact", source_conv: int | None = None, source_msg: int | None = None, pinned: bool = False, status: str = "active") -> dict | None:
     """Stores a fact; returns None if the same fact is already remembered (active or waiting for review).
-    Facts learned from chats come in as "pending"; the user saying "remember ..." is "active"."""
+    Facts come from the user saying "remember ..." (status "active"). "pending" is only left by older
+    versions, which guessed facts from chats; drop_pending() clears those at startup."""
     text = " ".join(text.split())
     if not text:
         return None
@@ -89,20 +90,12 @@ def update(mem_id: int, text: str | None = None, pinned: bool | None = None, kin
         conn.close()
 
 
-def approve(mem_id: int) -> bool:
+def drop_pending() -> int:
+    """Deletes facts still waiting for review. They came from the removed background extraction,
+    were never used in answers, and there is no longer a place to review them."""
     conn = assistant_db.connect()
     try:
-        n = conn.execute("UPDATE memories SET status = 'active' WHERE id = ?", (mem_id,)).rowcount
-        conn.commit()
-        return n > 0
-    finally:
-        conn.close()
-
-
-def approve_all() -> int:
-    conn = assistant_db.connect()
-    try:
-        n = conn.execute("UPDATE memories SET status = 'active' WHERE status = 'pending'").rowcount
+        n = conn.execute("DELETE FROM memories WHERE status = 'pending'").rowcount
         conn.commit()
         return n
     finally:

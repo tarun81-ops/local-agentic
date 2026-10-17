@@ -55,6 +55,9 @@ def connect(db_path: Path) -> sqlite3.Connection:
     if reset:
         conn.executescript("DROP TABLE IF EXISTS chunks; DROP TABLE IF EXISTS files;")
     conn.executescript(SCHEMA)
+    if not any(r[1] == "hidden" for r in conn.execute("PRAGMA table_info(roots)")):
+        # Additive, no rebuild: whole-PC content roots are internal and kept out of the folder lists.
+        conn.execute("ALTER TABLE roots ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
     if reset:
         with conn:
             # Folders are kept but marked unscanned, so the app rebuilds them on startup, and
@@ -192,9 +195,23 @@ def recent_files(conn: sqlite3.Connection, since: float, limit: int = 20) -> lis
 
 # ---- roots ------------------------------------------------------------------------
 
-def add_root(conn: sqlite3.Connection, root: Path) -> None:
+def add_root(conn: sqlite3.Connection, root: Path, hidden: bool = False) -> None:
+    """hidden=True: an internal root (whole-PC access). It is never scanned by rglob, never watched,
+    and not listed on the Index page; a background worker fills it."""
     with conn:
-        conn.execute("INSERT OR IGNORE INTO roots (path, added_at) VALUES (?, ?)", (str(root), _now()))
+        conn.execute("INSERT OR IGNORE INTO roots (path, added_at, last_scan) VALUES (?, ?, ?)",
+                     (str(root), _now(), _now() if hidden else None))
+        if hidden:
+            conn.execute("UPDATE roots SET hidden = 1 WHERE path = ?", (str(root),))
+
+
+def hidden_roots(conn: sqlite3.Connection) -> list[str]:
+    return [r[0] for r in conn.execute("SELECT path FROM roots WHERE hidden = 1")]
+
+
+def file_root(conn: sqlite3.Connection, path: Path | str) -> str | None:
+    row = conn.execute("SELECT root FROM files WHERE path = ?", (str(path),)).fetchone()
+    return row[0] if row else None
 
 
 def remove_root(conn: sqlite3.Connection, root: str) -> list[str]:
@@ -209,7 +226,7 @@ def remove_root(conn: sqlite3.Connection, root: str) -> list[str]:
 
 
 def unscanned_roots(conn: sqlite3.Connection) -> list[str]:
-    return [r[0] for r in conn.execute("SELECT path FROM roots WHERE last_scan IS NULL ORDER BY added_at")]
+    return [r[0] for r in conn.execute("SELECT path FROM roots WHERE last_scan IS NULL AND hidden = 0 ORDER BY added_at")]
 
 
 def mark_scanned(conn: sqlite3.Connection, root: Path) -> None:
@@ -222,19 +239,21 @@ def list_roots(conn: sqlite3.Connection) -> list[dict]:
         "SELECT r.path, r.added_at, r.last_scan, COUNT(f.path) AS files, COALESCE(SUM(f.size), 0) AS bytes, "
         # A blank hash = indexed for keyword search but still without vectors (see mark_complete).
         "COALESCE(SUM(f.hash = ''), 0) AS keyword_only "
-        "FROM roots r LEFT JOIN files f ON f.root = r.path GROUP BY r.path ORDER BY r.added_at"
+        "FROM roots r LEFT JOIN files f ON f.root = r.path WHERE r.hidden = 0 GROUP BY r.path ORDER BY r.added_at"
     )
     return [dict(r) for r in rows]
 
 
-def root_paths(conn: sqlite3.Connection) -> list[str]:
-    return [r[0] for r in conn.execute("SELECT path FROM roots")]
+def root_paths(conn: sqlite3.Connection, include_hidden: bool = False) -> list[str]:
+    """The folders the user added (what is listed and watched). include_hidden adds whole-PC roots."""
+    sql = "SELECT path FROM roots" + ("" if include_hidden else " WHERE hidden = 0")
+    return [r[0] for r in conn.execute(sql)]
 
 
 def root_for(conn: sqlite3.Connection, path: Path) -> str | None:
     """The indexed folder that contains path, if any (longest match wins for nested folders)."""
     best = None
-    for root in root_paths(conn):
+    for root in root_paths(conn, include_hidden=True):
         try:
             path.relative_to(root)
         except ValueError:
