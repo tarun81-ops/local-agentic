@@ -69,6 +69,12 @@ Keep the `eval\results\*.json` file: it's the baseline to compare the next model
 - [ ] Close the window: app stays in the tray. Tray > Quit: Task Manager shows no `python.exe` left behind.
 - [ ] Kill the backend `python.exe` in Task Manager: within a few seconds the app works again (auto-restart).
 - [ ] Settings shows FREE MEMORY; after 10 idle minutes `ollama ps` no longer lists the chat model.
+- [ ] Organize > Recycle Bin and Delete forever (real Windows bin; the unit tests only simulate it):
+  - [ ] Delete a test file in File Explorer, open the Recycle Bin tab: it is listed with its name, original folder, size and "deleted today". Items already in the bin from before show up too.
+  - [ ] RESTORE puts it back where it was (a taken name gets "(restored)"); Explorer's Recycle Bin no longer lists it.
+  - [ ] DELETE FOREVER on a test item asks first (Cancel is focused), then it is gone from the tab and from Explorer's Recycle Bin. A folder with read-only files inside goes too.
+  - [ ] SELECT 30+ DAYS OLD only ticks items deleted 30 or more days ago. EMPTY RECYCLE BIN asks first and clears the list.
+  - [ ] Move & delete > DELETE FOREVER on a test file: confirm step, file is gone, nothing new in the Recycle Bin, no Undo button; History shows "deleted forever". Main folders, drives and password-like files are still refused.
 
 ## 3. Installer (`cd ui; npm run build`)
 
