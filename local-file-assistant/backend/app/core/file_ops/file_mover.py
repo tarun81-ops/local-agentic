@@ -4,6 +4,7 @@ go to the Recycle Bin, new folders are removed if they are still empty. Recycle 
 for the history but are restored from the Recycle Bin itself."""
 import errno
 import json
+import logging
 import os
 import shutil
 import threading
@@ -11,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+log = logging.getLogger(__name__)
 LOG_NAME = "undo_log.jsonl"
 _LOCK = threading.Lock()
 
@@ -24,7 +26,20 @@ def _read(log_dir: Path) -> list[dict]:
     path = _log_path(log_dir)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries = []
+    for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            entry = None
+        if isinstance(entry, dict) and "id" in entry and "batch" in entry:
+            entries.append(entry)
+        else:
+            # A crash mid-write leaves a cut-off line. One bad line must not take History and Undo down with it.
+            log.warning("undo log: skipping unreadable line %d of %s", n, path)
+    return entries
 
 
 def _write(log_dir: Path, entries: list[dict]) -> None:
@@ -77,6 +92,27 @@ def _entry(batch: str, op: str, src: Path | None, dst: Path | None) -> dict:
             "to": str(dst) if dst else None, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
 
+def _first_missing(folder: Path) -> Path | None:
+    """The outermost folder of `folder`'s path that doesn't exist yet (what a move into it will create), or None."""
+    missing = None
+    while not folder.exists() and folder.parent != folder:
+        missing, folder = folder, folder.parent
+    return missing
+
+
+def _remove_made_dirs(start: Path, made: Path) -> None:
+    """After a move is undone: removes the folders it created, innermost first, as long as they are empty."""
+    cur = start
+    while True:
+        try:
+            cur.rmdir()  # refuses a folder with anything in it
+        except OSError:
+            return
+        if os.path.normcase(str(cur)) == os.path.normcase(str(made)) or cur.parent == cur:
+            return
+        cur = cur.parent
+
+
 def move(from_path: Path, to_path: Path, log_dir: Path, batch: str) -> dict:
     with _LOCK:
         if not from_path.exists():
@@ -84,6 +120,9 @@ def move(from_path: Path, to_path: Path, log_dir: Path, batch: str) -> dict:
         if to_path.exists() and os.path.normcase(str(to_path)) != os.path.normcase(str(from_path)):
             raise FileExistsError(f"destination already exists: {to_path}")
         entry = _entry(batch, "move", from_path, to_path)
+        made = _first_missing(to_path.parent)
+        if made is not None:
+            entry["made_dir"] = str(made)  # undo removes it again if it is empty, so Undo leaves no stray folders
         _append(log_dir, entry)  # logged first: a crash mid-move still leaves a record
         try:
             _raw_move(from_path, to_path)
@@ -149,6 +188,17 @@ def record_trash(path: Path, log_dir: Path, batch: str) -> None:
         )
 
 
+def record_purge(path: Path, log_dir: Path, batch: str, partial: bool = False) -> None:
+    """A permanent delete: kept in the history so you can see what went, but it can't be undone.
+    `partial`: a folder that was only partly deleted before something (an open file) stopped it."""
+    with _LOCK:
+        entry = {"id": uuid.uuid4().hex, "batch": batch, "op": "purge", "from": str(path), "to": None,
+                 "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        if partial:
+            entry["partial"] = True
+        _append(log_dir, entry)
+
+
 UNDOABLE = ("move", "copy", "mkdir")
 
 
@@ -168,6 +218,8 @@ def undo_batch(log_dir: Path, batch: str) -> list[dict]:
                     if not src.exists():
                         raise FileNotFoundError(f"no longer at {src}")
                     _raw_move(src, dst)
+                    if e.get("made_dir"):
+                        _remove_made_dirs(src.parent, Path(e["made_dir"]))
                 elif e["op"] == "copy":
                     if src.exists():
                         trash(src)
@@ -191,12 +243,13 @@ def undo_last(log_dir: Path) -> list[dict] | None:
 def history(log_dir: Path, limit: int = 20) -> list[dict]:
     """Batches, newest first: {batch, at, moves, copies, folders, trashed, undoable, entries}."""
     batches: dict[str, dict] = {}
-    count = {"move": "moves", "copy": "copies", "mkdir": "folders", "trash": "trashed"}
+    count = {"move": "moves", "copy": "copies", "mkdir": "folders", "trash": "trashed", "purge": "purged"}
     for e in _read(log_dir):
         b = batches.setdefault(e["batch"], {"batch": e["batch"], "at": e["at"], "moves": 0, "copies": 0, "folders": 0,
-                                            "trashed": 0, "undoable": 0, "entries": []})
+                                            "trashed": 0, "purged": 0, "partial": 0, "undoable": 0, "entries": []})
         b[count.get(e["op"], "trashed")] += 1
         b["undoable"] += e["op"] in UNDOABLE
+        b["partial"] += bool(e.get("partial"))
         b["entries"].append(e)
         b["at"] = max(b["at"], e["at"])
     return sorted(batches.values(), key=lambda b: b["at"], reverse=True)[:limit]
