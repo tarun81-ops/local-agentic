@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class OrganizeAction(BaseModel):
-    op: Literal["move", "copy", "rename", "mkdir", "delete"]
+    op: Literal["move", "copy", "rename", "mkdir", "delete", "delete_forever"]
     path: str  # the file or folder; for "mkdir" the folder to create
     to: str | None = None  # move/copy: the full destination path (older callers also send a rename's new name here)
     to_folder: str | None = None  # move/copy into this folder, keeping the name ("name (2)" if it's taken)
@@ -13,6 +13,7 @@ class OrganizeAction(BaseModel):
     group: str | None = None  # destination folder, or "Duplicates" / "Backup & temp files"
     selected: bool = True  # ticked when the plan is shown; risky suggestions (old large files) start unticked
     size: int | None = None  # bytes, so the UI can show what a delete frees
+    keep: str | None = None  # duplicates: the copy that stays. The delete is refused (or skipped) if it has gone or changed
 
 
 class OrganizePlan(BaseModel):
@@ -38,6 +39,7 @@ class TidyRequest(BaseModel):
 
 class ApplyRequest(BaseModel):
     actions: list[OrganizeAction]
+    skip_missing: bool = False  # a Clean up plan can go stale: skip what has already vanished instead of refusing the whole batch
 
 
 class UndoRequest(BaseModel):

@@ -332,3 +332,123 @@ def test_open_uses_chat_s_blocked_list_too_and_refuses_stream_names(client, pc, 
     r = client.post("/organize/open", json={"path": str(dl / "bill.pdf") + ":evil.exe"}, headers=AUTH)
     assert r.status_code == 400 and "Not a file or folder name" in r.json()["detail"]
     assert client.post("/organize/open", json={"path": str(dl / "bill.pdf")}, headers=AUTH).status_code == 200
+
+
+# ---- Clean up plans that go stale, duplicate keepers, partial deletes
+
+
+def test_skip_missing_skips_what_vanished_instead_of_refusing_the_batch(client, pc):
+    dl = pc["home"] / "Downloads"
+    gone = dl / "gone.pdf"
+    acts = [{"op": "move", "path": str(gone), "to_folder": str(pc["home"] / "Documents")},
+            {"op": "move", "path": str(dl / "photo.jpg"), "to_folder": str(pc["home"] / "Documents")}]
+    refused = client.post("/organize/apply", json={"actions": acts}, headers=AUTH)
+    assert refused.status_code == 400 and (dl / "photo.jpg").exists()  # the default stays all-or-nothing
+    res = client.post("/organize/apply", json={"actions": acts, "skip_missing": True}, headers=AUTH).json()
+    assert [(r["ok"], r.get("skipped", False)) for r in res["results"]] == [(True, True), (True, False)]
+    assert not (dl / "photo.jpg").exists() and (pc["home"] / "Documents" / "photo.jpg").exists()
+
+
+def _dup_plan(client, pc):
+    dl = pc["home"] / "Downloads"
+    _make(dl / "a.dat", b"same bytes", 5)
+    _make(dl / "a (1).dat", b"same bytes", 1)
+    plan = client.post("/organize/tidy", json={"checks": ["duplicates"]}, headers=AUTH).json()
+    [dup] = [a for a in plan["actions"] if a["op"] == "delete"]
+    assert dup["keep"].endswith("a.dat") and dup["path"].endswith("a (1).dat")
+    return dl, dup
+
+
+def test_a_duplicate_is_not_deleted_when_its_kept_copy_is_gone_or_changed(client, pc):
+    dl, dup = _dup_plan(client, pc)
+    (dl / "a.dat").unlink()  # you deleted the copy that was meant to stay
+    r = client.post("/organize/apply", json={"actions": [dup]}, headers=AUTH)
+    assert r.status_code == 400 and "gone or has changed" in r.json()["detail"]["problems"][0] and (dl / "a (1).dat").exists()
+    r = client.post("/organize/apply", json={"actions": [dup], "skip_missing": True}, headers=AUTH).json()
+    assert r["results"][0]["skipped"] and (dl / "a (1).dat").exists()  # the last copy is left alone
+    _make(dl / "a.dat", b"different now!")  # the keeper was replaced by other content (other size)
+    assert client.post("/organize/apply", json={"actions": [dup]}, headers=AUTH).status_code == 400
+
+
+def test_the_kept_copy_cannot_be_deleted_in_the_same_batch(client, pc):
+    dl, dup = _dup_plan(client, pc)
+    both = [dup, {"op": "delete", "path": dup["keep"]}]
+    r = client.post("/organize/apply", json={"actions": both}, headers=AUTH)
+    assert r.status_code == 400 and "being kept" in r.json()["detail"]["problems"][0]
+    assert (dl / "a.dat").exists() and (dl / "a (1).dat").exists()
+    ok = client.post("/organize/apply", json={"actions": [dup]}, headers=AUTH).json()
+    assert ok["results"][0]["ok"] and (dl / "a.dat").exists() and not (dl / "a (1).dat").exists()
+
+
+def test_a_folder_that_was_only_partly_deleted_is_logged_as_such(client, pc, monkeypatch):
+    folder = pc["home"] / "Documents" / "Project"
+    real = routes_organize.erase
+
+    def stuck(path):  # an open file stops it halfway
+        (path / "notes.txt").unlink()
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(routes_organize, "erase", stuck)
+    res = _apply(client, {"op": "delete_forever", "path": str(folder)}).json()
+    assert res["results"][0]["ok"] is False and "in use" in res["results"][0]["error"]
+    batch = client.get("/organize/history", headers=AUTH).json()["batches"][0]
+    assert batch["purged"] == 1 and batch["partial"] == 1
+    monkeypatch.setattr(routes_organize, "erase", lambda p: (_ for _ in ()).throw(PermissionError("locked")))  # nothing removed: nothing logged
+    _apply(client, {"op": "delete_forever", "path": str(folder / "sub")})
+    assert client.get("/organize/history", headers=AUTH).json()["batches"][0]["batch"] == batch["batch"]
+    monkeypatch.setattr(routes_organize, "erase", real)
+
+
+def _wait_job(client, job, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end:
+        r = client.get(f"/organize/tidy/jobs/{job}", headers=AUTH).json()
+        if r["state"] != "running":
+            return r
+        time.sleep(0.05)
+    raise AssertionError("scan did not finish")
+
+
+def test_a_background_scan_reports_progress_and_hands_over_the_plan(client, pc):
+    dl = pc["home"] / "Downloads"
+    _make(dl / "x.dat", b"y" * 3000, 5); _make(dl / "x (1).dat", b"y" * 3000, 1)
+    job = client.post("/organize/tidy/start", json={"checks": ["duplicates", "sort"]}, headers=AUTH).json()["job"]
+    done = _wait_job(client, job)
+    assert done["state"] == "done" and done["error"] is None
+    assert any(a["group"] == "Duplicates" for a in done["plan"]["actions"]) and done["plan"]["scanned"] >= 2
+    assert client.get("/organize/tidy/jobs/nope", headers=AUTH).status_code == 404
+    assert client.post("/organize/tidy/start", json={"checks": []}, headers=AUTH).status_code == 400  # same checks as /tidy
+    assert client.post("/organize/tidy/start", json={"folder": str(pc["drive"])}, headers=AUTH).status_code == 400
+
+
+def test_a_background_scan_can_be_stopped_and_reports_progress_ticks(client, pc, monkeypatch):
+    real = tidy.scan
+
+    def slow_scan(folder, tick=None):
+        for n in range(200):
+            tick("Looking through folders", n, None)  # raises Cancelled once stopped
+            time.sleep(0.02)
+        return real(folder)
+
+    monkeypatch.setattr(tidy, "scan", slow_scan)
+    job = client.post("/organize/tidy/start", json={}, headers=AUTH).json()["job"]
+    time.sleep(0.2)
+    running = client.get(f"/organize/tidy/jobs/{job}", headers=AUTH).json()
+    assert running["state"] == "running" and running["phase"] == "Looking through folders" and running["done"] > 0
+    assert client.post(f"/organize/tidy/jobs/{job}/cancel", headers=AUTH).json()["state"] in ("running", "cancelled")
+    assert _wait_job(client, job)["state"] == "cancelled"
+    newer = client.post("/organize/tidy/start", json={}, headers=AUTH).json()["job"]  # a new scan stops an older one
+    older = client.post("/organize/tidy/start", json={}, headers=AUTH).json()["job"]
+    assert _wait_job(client, newer)["state"] == "cancelled"
+    client.post(f"/organize/tidy/jobs/{older}/cancel", headers=AUTH)
+    _wait_job(client, older)
+
+
+def test_hashing_reports_bytes_so_one_huge_file_still_moves_the_bar(tmp_path):
+    a, b = tmp_path / "a.bin", tmp_path / "b.bin"
+    a.write_bytes(b"z" * 2_500_000); b.write_bytes(b"z" * 2_500_000)
+    files = [{"path": str(p), "size": p.stat().st_size, "depth": 0, "mtime": 0, "cloud": False} for p in (a, b)]
+    seen = []
+    assert len(tidy.duplicate_groups(files, lambda phase, done, total: seen.append((phase, done, total)))) == 1
+    hashing = [s for s in seen if s[0] == "Checking that they are identical"]
+    assert hashing[-1][1] == hashing[-1][2] == 5_000_000 and [s[1] for s in hashing] == sorted(s[1] for s in hashing)
