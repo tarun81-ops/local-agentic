@@ -209,7 +209,7 @@ def free_target(folder: Path, name: str, taken: set[str]) -> Path:
 def check_batch(actions: list, roots: list[str]) -> tuple[list[tuple], list[str]]:
     """Checks every action of a batch before anything runs. Returns ([(action, src, dst)], problems).
     Ops: move / copy (to `to_folder`, or to the full path `to`), rename (`to` = new name in the same
-    folder), mkdir (`path` = the new folder), delete (Recycle Bin). Files and folders both work."""
+    folder), mkdir (`path` = the new folder), delete (Recycle Bin), delete_forever (gone for good). Files and folders both work."""
     resolved, problems = [], []
     sources: set[str] = set()
     targets: set[str] = set()
@@ -239,7 +239,7 @@ def check_batch(actions: list, roots: list[str]) -> tuple[list[tuple], list[str]
             key = same_file_key(src)
             if key in sources:
                 raise ValueError(f"listed twice: {a.path}")
-            if a.op in ("move", "rename", "delete") and _holds_main_folder(src, guarded):
+            if a.op in ("move", "rename", "delete", "delete_forever") and _holds_main_folder(src, guarded):
                 raise ValueError(f"{src.name or src} is a main folder or holds one (like your user folder); "
                                  "it can't be moved, renamed or deleted (what's inside it can)")
             sources.add(key)
@@ -288,6 +288,6 @@ def check_batch(actions: list, roots: list[str]) -> tuple[list[tuple], list[str]
         except (PathNotAllowed, ValueError) as exc:
             problems.append(str(exc))
     # New folders first, so moves into them work; deletes last.
-    order = {"mkdir": 0, "rename": 1, "move": 1, "copy": 1, "delete": 2}
+    order = {"mkdir": 0, "rename": 1, "move": 1, "copy": 1, "delete": 2, "delete_forever": 2}
     resolved.sort(key=lambda r: order[r[0].op])
     return resolved, problems
