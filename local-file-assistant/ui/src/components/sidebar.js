@@ -8,8 +8,7 @@ export const NAV_ITEMS = [
   { id: 'chat', n: '01', label: 'Chat' },
   { id: 'find', n: '02', label: 'Find file' },
   { id: 'organize', n: '03', label: 'Organize' },
-  { id: 'tasks', n: '04', label: 'Tasks' },
-  { id: 'settings', n: '05', label: 'Settings', setup: true },
+  { id: 'settings', n: '04', label: 'Settings', setup: true },
 ];
 const RULE_HEIGHT = 17; // the divider between the two groups (1px + 8px margins)
 const NAV_ALIAS = { search: 'find', index: 'settings', memory: 'settings' }; // pages folded into another light it up

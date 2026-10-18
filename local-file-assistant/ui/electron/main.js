@@ -341,8 +341,8 @@ function showNotice(type, event) {
   shownNotifications.add(n);
   n.on('click', () => {
     // A reminder about a file opens that file (through the backend, which only opens indexed files).
-    if (type === 'reminder' && event.task.file_path) backendPost('/files/open', { path: event.task.file_path }).catch(() => showMain('tasks'));
-    else showMain(event.page || 'tasks');
+    if (type === 'reminder' && event.task.file_path) backendPost('/files/open', { path: event.task.file_path }).catch(() => showMain());
+    else showMain(event.page);
   });
   n.on('close', () => shownNotifications.delete(n));
   n.show();

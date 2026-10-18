@@ -16,11 +16,10 @@ import { render as renderFind } from './pages/find.js';
 import { render as renderOrganize } from './pages/organize.js';
 import { render as renderSearch } from './pages/search.js';
 import { render as renderSettings } from './pages/settings-shell.js';
-import { render as renderTasks } from './pages/tasks.js';
 
 applyCached();
 
-const PAGES = { chat: renderChat, find: renderFind, search: renderSearch, organize: renderOrganize, tasks: renderTasks, settings: renderSettings };
+const PAGES = { chat: renderChat, find: renderFind, search: renderSearch, organize: renderOrganize, settings: renderSettings };
 // Index and Memory now live inside Settings as tabs; old links ("Go to Index", the tray) still land there.
 const MOVED = { index: 'files', memory: 'memory' };
 

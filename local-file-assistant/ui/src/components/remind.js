@@ -4,7 +4,7 @@ import { el, fileName, notice } from './common.js';
 
 /**
  * REMIND ME about a file: type when and what ("review tomorrow 5pm"), check the parsed proposal,
- * and confirm. The reminder keeps the file, so its notification and the Tasks page can open it.
+ * and confirm. The reminder keeps the file, so its notification can open it.
  */
 export function openRemind(path, name = fileName(path)) {
   const dialog = el('dialog', { class: 'study-dialog', 'aria-label': `Remind me about ${name}` });
