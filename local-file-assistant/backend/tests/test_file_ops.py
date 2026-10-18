@@ -41,3 +41,31 @@ def test_inside_roots_blocks_escape(tmp_path):
         inside_roots("/etc/passwd", [str(root)])
 
 
+
+
+def test_a_cut_off_log_line_does_not_break_history_or_undo(tmp_path):
+    from app.core.file_ops import file_mover
+
+    src = tmp_path / "a.txt"
+    src.write_text("x")
+    batch = file_mover.new_batch()
+    file_mover.move(src, tmp_path / "out" / "a.txt", tmp_path / "log", batch)
+    with open(tmp_path / "log" / file_mover.LOG_NAME, "a", encoding="utf-8") as f:
+        f.write('{"id": "abc", "batch": "zz", "op": "mo')  # a crash in the middle of a write
+    assert [b["moves"] for b in file_mover.history(tmp_path / "log")] == [1]
+    assert [r["ok"] for r in file_mover.undo_batch(tmp_path / "log", batch)] == [True]
+    assert src.exists() and not (tmp_path / "out").exists()  # the folder the move made is gone again
+    assert file_mover.history(tmp_path / "log") == []  # the bad line was dropped on rewrite
+
+
+def test_undo_keeps_a_folder_that_has_other_things_in_it(tmp_path):
+    from app.core.file_ops import file_mover
+
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_text("a"), b.write_text("b")
+    batch = file_mover.new_batch()
+    file_mover.move(a, tmp_path / "Docs" / "a.txt", tmp_path / "log", batch)
+    file_mover.move(b, tmp_path / "Docs" / "b.txt", tmp_path / "log", batch)
+    (tmp_path / "Docs" / "mine.txt").write_text("not from the batch")
+    assert all(r["ok"] for r in file_mover.undo_batch(tmp_path / "log", batch))
+    assert a.exists() and b.exists() and (tmp_path / "Docs" / "mine.txt").exists()

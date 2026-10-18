@@ -78,7 +78,11 @@ def _is_link(entry: os.DirEntry) -> bool:
     return pc_access._is_link(entry)
 
 
-def scan(folder: Path) -> tuple[list[dict], bool]:
+class Cancelled(Exception):
+    """The user stopped a scan (raised from the progress callback)."""
+
+
+def scan(folder: Path, tick=None) -> tuple[list[dict], bool]:
     """Every regular file under folder: [{path, depth, size, mtime, cloud}], plus whether it was cut off.
     Only the modified time is used for age: reading files to compare them updates the last-access time
     on Windows, so "last opened" would reset every time Tidy-up runs."""
@@ -86,6 +90,8 @@ def scan(folder: Path) -> tuple[list[dict], bool]:
     stack = [(folder, 0)]
     while stack:
         cur, depth = stack.pop()
+        if tick:
+            tick("Looking through folders", len(out), None)
         try:
             entries = list(os.scandir(cur))
         except OSError:
@@ -113,12 +119,14 @@ def scan(folder: Path) -> tuple[list[dict], bool]:
     return out, False
 
 
-def _sha256(path: str) -> str | None:
+def _sha256(path: str, on_block=None) -> str | None:
     h = hashlib.sha256()
     try:
         with open(path, "rb") as f:
             for block in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(block)
+                if on_block:
+                    on_block(len(block))
     except OSError:
         return None
     return h.hexdigest()
@@ -135,30 +143,42 @@ def _quick_key(path: str) -> bytes | None:
         return None
 
 
-def duplicate_groups(files: list[dict]) -> list[list[dict]]:
-    """Groups of identical files (size, then a quick check, then sha256). Empty files are ignored."""
+def duplicate_groups(files: list[dict], tick=None) -> list[list[dict]]:
+    """Groups of identical files (size, then a quick check, then sha256). Empty files are ignored.
+    `tick(phase, done, total)` reports progress (bytes while hashing) and may raise Cancelled."""
     by_size: dict[int, list[dict]] = defaultdict(list)
     for f in files:
         if 0 < f["size"] < HASH_SKIP_BYTES and not f.get("cloud"):
             by_size[f["size"]].append(f)
-    groups = []
-    for same_size in by_size.values():
-        if len(same_size) < 2:
-            continue
+    same_sized = [g for g in by_size.values() if len(g) > 1]
+    quick_total, quick_done = sum(len(g) for g in same_sized), 0
+    candidates: list[list[dict]] = []
+    for same_size in same_sized:
         by_quick: dict[bytes, list[dict]] = defaultdict(list)
         for f in same_size:
+            if tick:
+                tick("Comparing files", quick_done, quick_total)
+            quick_done += 1
             k = _quick_key(f["path"])
             if k is not None:
                 by_quick[k].append(f)
-        for cands in by_quick.values():
-            if len(cands) < 2:
-                continue
-            by_hash: dict[str, list[dict]] = defaultdict(list)
-            for f in cands:
-                h = _sha256(f["path"])
-                if h:
-                    by_hash[h].append(f)
-            groups += [g for g in by_hash.values() if len(g) > 1]
+        candidates += [c for c in by_quick.values() if len(c) > 1]
+    total = sum(f["size"] for c in candidates for f in c)
+    done = 0
+
+    def on_block(n: int) -> None:
+        nonlocal done
+        done += n
+        tick("Checking that they are identical", done, total)
+
+    groups = []
+    for cands in candidates:
+        by_hash: dict[str, list[dict]] = defaultdict(list)
+        for f in cands:
+            h = _sha256(f["path"], on_block if tick else None)
+            if h:
+                by_hash[h].append(f)
+        groups += [g for g in by_hash.values() if len(g) > 1]
     return groups
 
 
@@ -247,20 +267,20 @@ def by_type(files: list[dict]) -> list[dict]:
 
 
 def propose(folder: str | Path, now: float | None = None, large_bytes: int = LARGE_BYTES, old_days: int = OLD_DAYS,
-            checks: list[str] | tuple[str, ...] = ALL_CHECKS) -> OrganizePlan:
+            checks: list[str] | tuple[str, ...] = ALL_CHECKS, tick=None) -> OrganizePlan:
     now = now or time.time()
     checks = set(checks)
     root = Path(folder).resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"Folder not found: {folder}")
-    files, cut_off = scan(root)
+    files, cut_off = scan(root, tick) if tick else scan(root)
     actions: list[OrganizeAction] = []
     handled: set[str] = set()
     kept: set[str] = set()  # the surviving copy of each duplicate group: never offered for deletion again
     freed = 0
 
     # 1. duplicates
-    for group in duplicate_groups(files) if "duplicates" in checks else []:
+    for group in (duplicate_groups(files, tick) if tick else duplicate_groups(files)) if "duplicates" in checks else []:
         group.sort(key=_keeper_rank)
         keep = group[0]
         kept.add(keep["path"])
@@ -270,7 +290,7 @@ def propose(folder: str | Path, now: float | None = None, large_bytes: int = LAR
             if not loose:
                 reason += " (inside a folder: check it isn't part of an unzipped program)"
             actions.append(OrganizeAction(op="delete", path=dup["path"], group="Duplicates", size=dup["size"],
-                                          selected=loose, reason=reason))
+                                          selected=loose, reason=reason, keep=keep["path"]))
             handled.add(dup["path"])
             if loose:
                 freed += dup["size"]
