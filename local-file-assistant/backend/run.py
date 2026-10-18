@@ -23,7 +23,8 @@ def is_loopback(host: str) -> bool:
 
 def main() -> None:
     # The API reads private files; it must never listen on the network, whatever HOST says.
-    if not is_loopback(settings.host):
+    # In Docker the container must listen on 0.0.0.0; docker-compose publishes the port on 127.0.0.1 only.
+    if not is_loopback(settings.host) and os.environ.get("LFA_IN_DOCKER") != "1":
         sys.exit(f"Refusing to listen on {settings.host}: the backend only binds to 127.0.0.1.")
     from app.main import app
 

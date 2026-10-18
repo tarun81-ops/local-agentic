@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      # 127.0.0.1 on the left: reachable only from this PC, never from the network
+      - "127.0.0.1:8756:8756"
+    environment:
+      # Ollama runs on Windows (model already downloaded there), not in Docker
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      API_TOKEN: ${API_TOKEN:-change-me-please}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # index + database survive container restarts
+      - lfa_data:/data
+      # your files, read-only. Set FILES_DIR in .env, e.g. FILES_DIR=C:/Users/tarun verma/Documents
+      - "${FILES_DIR:-./test_corpus}:/files:ro"
+
+volumes:
+  lfa_data:
