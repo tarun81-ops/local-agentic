@@ -1,16 +1,18 @@
 import { api } from '../api.js';
 import { el, fileName, fmtBytes, fmtDate, notice, relPath, svg, ICONS, swatch } from '../components/common.js';
 
-// Organize has three tabs:
+// Organize has four tabs:
 //   Clean up       Tidy-up: a cleanup plan from names, sizes, dates and duplicate checks (no AI).
 //   Move & delete  a small file browser: move, copy, rename, new folder, delete (to the Recycle Bin).
+//   Recycle Bin    what is in the bin: restore items or delete them for good.
 //   History        every change made here, with Undo.
 // Nothing on disk changes until you press the button that says so. Moves, copies and new folders can
-// be undone; deletes go to the Recycle Bin.
+// be undone; deletes go to the Recycle Bin unless you choose Delete forever (never undoable).
 
-const TABS = [['clean', 'Clean up'], ['files', 'Move & delete'], ['history', 'History']];
+const TABS = [['clean', 'Clean up'], ['files', 'Move & delete'], ['bin', 'Recycle Bin'], ['history', 'History']];
 const CHECKS = [['duplicates', 'Duplicates'], ['partial', 'Unfinished downloads'], ['old_large', 'Old large files'], ['empty', 'Empty folders'], ['sort', 'Sort by type']];
 const SHOWN_PER_GROUP = 5;
+const SCAN_POLL_MS = 300;
 
 const store = {
   get(k, d) {
@@ -41,7 +43,8 @@ function checkbox(checked, label, onchange) {
 
 /** "3 items moved, 1 item copied, 2 items sent to the Recycle Bin" from apply results. */
 function describe(results) {
-  const ok = results.filter((r) => r.ok);
+  const ok = results.filter((r) => r.ok && !r.skipped);
+  const skipped = results.filter((r) => r.skipped).length;
   const n = (op) => ok.filter((r) => r.op === op).length;
   const parts = [];
   if (n('move')) parts.push(`${plural(n('move'), 'item')} moved`);
@@ -49,8 +52,16 @@ function describe(results) {
   if (n('rename')) parts.push('renamed');
   if (n('mkdir')) parts.push(`${plural(n('mkdir'), 'folder')} created`);
   if (n('delete')) parts.push(`${plural(n('delete'), 'item')} sent to the Recycle Bin`);
+  if (n('delete_forever')) parts.push(`${plural(n('delete_forever'), 'item')} deleted forever`);
+  if (skipped) parts.push(`${skipped} skipped (already gone or changed)`);
   const text = parts.length ? parts.join(', ') : 'Nothing changed';
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** "Checking that they are identical — 42%" / "Looking through folders — 1,200 files so far" */
+function scanText(j) {
+  if (j.total) return `${j.phase} — ${Math.min(100, Math.round((j.done / j.total) * 100))}%`;
+  return j.done ? `${j.phase} — ${j.done.toLocaleString()} files so far` : `${j.phase}…`;
 }
 
 function problemsOf(e) {
@@ -61,7 +72,7 @@ function problemsOf(e) {
 /** The result of a change: what happened, what failed, and Undo when it can be undone. */
 function resultNote(res, onUndone) {
   const failed = res.results.filter((r) => !r.ok);
-  const undoable = res.results.some((r) => r.ok && r.op !== 'delete');
+  const undoable = res.results.some((r) => r.ok && !r.skipped && r.op !== 'delete' && r.op !== 'delete_forever');
   const box = el('div', { class: `org-toast ${failed.length ? 'org-toast-error' : ''}`, role: 'status' });
   const text = el('span', {}, `${describe(res.results)}.${failed.length ? ` ${plural(failed.length, 'item')} couldn’t be changed.` : ''}`);
   const undo = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Undo');
@@ -284,10 +295,33 @@ function cleanPane() {
     const mine = ++ticket;
     store.set('largeMb', Number(largeMb.value) || 100);
     store.set('oldDays', Number(oldDays.value) || 90);
-    idle(notice('Looking through the folder: names, sizes, dates and duplicate checks…'));
+    const status = el('span', { role: 'status' }, 'Starting…');
+    const stop = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Stop');
+    idle(el('div', { class: 'org-scan' }, el('span', { class: 'org-spinner', 'aria-hidden': 'true' }), status, el('span', { class: 'spacer' }), stop));
+    let job = null;
+    stop.addEventListener('click', () => {
+      stop.disabled = true;
+      status.textContent = 'Stopping…';
+      if (job) api.tidyCancel(job).catch(() => {});
+    });
     try {
-      const p = await api.tidy(folderSel.value || null, Number(largeMb.value) || 100, Number(oldDays.value) || 90, [...chosen]);
-      if (mine === ticket) showPlan(p);
+      job = (await api.tidyStart(folderSel.value || null, Number(largeMb.value) || 100, Number(oldDays.value) || 90, [...chosen])).job;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, SCAN_POLL_MS));
+        if (mine !== ticket || !node.isConnected) { // another scan took over, or the page was left
+          api.tidyCancel(job).catch(() => {});
+          return;
+        }
+        const j = await api.tidyJob(job);
+        if (j.state === 'running') {
+          if (!stop.disabled) status.textContent = scanText(j);
+          continue;
+        }
+        if (j.state === 'done') showPlan(j.plan);
+        else if (j.state === 'cancelled') idle(notice('Scan stopped. Nothing was changed.'));
+        else idle(notice(j.error || 'The scan failed.', 'error'));
+        break;
+      }
     } catch (e) {
       if (mine === ticket) idle(notice(e.message, 'error'));
     } finally {
@@ -315,7 +349,7 @@ function cleanPane() {
     count.replaceChildren(el('span', { class: 'org-spinner', 'aria-hidden': 'true' }), 'Applying… Large files can take a while.');
     count.setAttribute('role', 'status');
     try {
-      const res = await api.apply(actions);
+      const res = await api.apply(actions, { skipMissing: true }); // the plan may be minutes old: skip what has vanished
       idle(resultNote(res));
     } catch (e) {
       body.prepend(notice(problemsOf(e), 'error'));
@@ -511,11 +545,12 @@ function filesPane({ navigate }) {
       el('button', { type: 'button', class: 'btn btn-outline btn-sm', disabled: items.length !== 1, onclick: () => rename() }, 'Rename'),
       el('button', { type: 'button', class: 'btn btn-outline btn-sm', disabled: items.length !== 1, onclick: () => api.orgReveal(items[0].path).catch((e) => say(notice(e.message, 'error'))) }, 'Show in Explorer'),
       el('button', { type: 'button', class: 'btn btn-danger btn-sm', onclick: () => askDelete() }, 'Delete'),
+      el('button', { type: 'button', class: 'btn btn-outline btn-sm', title: 'Skips the Recycle Bin. Can’t be undone.', onclick: () => askDeleteForever() }, 'Delete forever'),
       el('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Clear selection', onclick: () => toggleAll(false) }, svg(ICONS.close, 12)),
     );
   }
 
-  const WORKING = { move: 'Moving', copy: 'Copying', rename: 'Renaming', mkdir: 'Creating the folder', delete: 'Sending to the Recycle Bin' };
+  const WORKING = { move: 'Moving', copy: 'Copying', rename: 'Renaming', mkdir: 'Creating the folder', delete: 'Sending to the Recycle Bin', delete_forever: 'Deleting for good' };
 
   async function apply(actions) {
     if (busy) return;
@@ -619,6 +654,22 @@ function filesPane({ navigate }) {
     yes.focus();
   }
 
+  function askDeleteForever() {
+    const items = chosenEntries();
+    if (!items.length) return;
+    const folders = items.filter((e) => e.is_dir).length;
+    const yes = el('button', { type: 'button', class: 'btn btn-danger btn-sm' }, 'Delete forever');
+    yes.addEventListener('click', () => apply(items.map((e) => ({ op: 'delete_forever', path: e.path }))));
+    const cancel = el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => drawSelbar() }, 'Cancel');
+    drawSelbar([
+      el('span', { class: 'org-count' }, `Delete ${items.length === 1 ? `“${items[0].name}”` : plural(items.length, 'item')} forever? It skips the Recycle Bin and can’t be undone.${folders ? ' Folders go with everything inside them.' : ''}`),
+      el('span', { class: 'spacer' }),
+      cancel,
+      yes,
+    ]);
+    cancel.focus(); // Enter must not confirm a permanent delete by accident
+  }
+
   up.addEventListener('click', () => { if (data?.parent && !busy) load(data.parent); });
   filter.addEventListener('input', draw);
   newFolder.addEventListener('click', askNewFolder);
@@ -670,6 +721,7 @@ function historyPane() {
             if (b.copies) parts.push(`${b.copies} copied`);
             if (b.folders) parts.push(`${plural(b.folders, 'folder')} created`);
             if (b.trashed) parts.push(`${b.trashed} sent to the Recycle Bin`);
+            if (b.purged) parts.push(`${b.purged} deleted forever${b.partial ? ` (${b.partial} only partly: something was using it)` : ''}`);
             const names = b.entries.slice(0, 3).map((e) => fileName(e.from || e.to)).join(', ') + (b.entries.length > 3 ? ` +${b.entries.length - 3} more` : '');
             const undo = el('button', { type: 'button', class: 'btn btn-outline btn-sm' }, 'Undo');
             undo.addEventListener('click', async () => {
@@ -687,7 +739,7 @@ function historyPane() {
               'div',
               { class: 'history-row' },
               el('div', { class: 'folder-main' }, el('div', {}, parts.join(', ')), el('div', { class: 'folder-meta' }, `${fmtDate(b.at)} · ${names}`)),
-              b.undoable ? undo : el('span', { class: 'badge badge-outline', title: 'Restore these from the Recycle Bin' }, 'In the Recycle Bin'),
+              b.undoable ? undo : b.purged && !b.trashed ? el('span', { class: 'badge badge-outline', title: 'These were deleted for good' }, 'Deleted forever') : el('span', { class: 'badge badge-outline', title: 'Restore these from the Recycle Bin tab' }, 'In the Recycle Bin'),
             );
           }),
         ),
@@ -698,6 +750,115 @@ function historyPane() {
   }
   load();
   return { node: el('div', { class: 'org-pane' }, box) };
+}
+
+// ---------------------------------------------------------------- Recycle Bin
+
+function binPane() {
+  const note = el('div', { class: 'org-note' });
+  const bar = el('div', { class: 'org-actionbar fm-selbar', hidden: true });
+  const body = el('div', { class: 'org-body' }, el('div', { class: 'quiet' }, 'Loading…'));
+  let data = null;
+  let selected = new Set();
+  let busy = false;
+  const say = (n) => note.replaceChildren(...(n ? [n] : []));
+  const DAY = 86400000;
+  const age = (i) => Math.floor((Date.now() - new Date(i.deleted_at).getTime()) / DAY);
+
+  function drawBar(content) {
+    const n = selected.size;
+    bar.hidden = !(n || busy || content);
+    if (bar.hidden) return bar.replaceChildren();
+    if (busy) return bar.replaceChildren(el('span', { class: 'org-count', role: 'status' }, el('span', { class: 'org-spinner', 'aria-hidden': 'true' }), busy));
+    if (content) return bar.replaceChildren(...content);
+    const bytes = data.items.filter((i) => selected.has(i.id)).reduce((t, i) => t + i.size, 0);
+    bar.replaceChildren(
+      el('span', { class: 'org-count' }, `${plural(n, 'item')} selected${bytes ? ` · ${fmtBytes(bytes)}` : ''}`),
+      el('span', { class: 'spacer' }),
+      el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => run('restore', [...selected]) }, 'Restore'),
+      el('button', { type: 'button', class: 'btn btn-danger btn-sm', onclick: () => confirm(`Delete ${n === 1 ? 'this item' : `these ${n} items`} forever? This can’t be undone.`, 'Delete forever', () => run('purge', [...selected])) }, 'Delete forever'),
+      el('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Clear selection', onclick: () => { selected = new Set(); draw(); } }, svg(ICONS.close, 12)),
+    );
+  }
+
+  function confirm(question, label, go) {
+    const yes = el('button', { type: 'button', class: 'btn btn-danger btn-sm' }, label);
+    yes.addEventListener('click', go);
+    drawBar([
+      el('span', { class: 'org-count' }, question),
+      el('span', { class: 'spacer' }),
+      el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => drawBar() }, 'Cancel'),
+      yes,
+    ]);
+    bar.querySelector('.btn-outline')?.focus(); // Enter must not confirm a permanent delete by accident
+  }
+
+  async function run(kind, ids) {
+    if (busy || !ids.length) return;
+    busy = kind === 'restore' ? 'Restoring…' : 'Deleting for good…';
+    drawBar();
+    try {
+      const res = await (kind === 'restore' ? api.binRestore(ids) : kind === 'empty' ? api.binEmpty() : api.binPurge(ids));
+      const ok = res.results.filter((r) => r.ok);
+      const bad = res.results.filter((r) => !r.ok);
+      const bytes = ok.reduce((t, r) => t + (r.item.size || 0), 0);
+      const verb = kind === 'restore' ? 'restored to where they were' : `deleted forever${bytes ? ` (${fmtBytes(bytes)} freed)` : ''}`;
+      const box = el('div', { class: `org-toast ${bad.length ? 'org-toast-error' : ''}`, role: 'status' }, el('span', {}, `${plural(ok.length, 'item')} ${verb}.${bad.length ? ` ${plural(bad.length, 'item')} couldn’t be changed.` : ''}`), el('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Dismiss', onclick: () => box.remove() }, svg(ICONS.close, 12)));
+      if (bad.length) box.append(el('div', { class: 'org-fails' }, ...bad.map((f) => el('div', {}, `${f.item.name}: ${f.error}`))));
+      say(box);
+      data = res;
+      selected = new Set([...selected].filter((id) => data.items.some((i) => i.id === id)));
+    } catch (e) {
+      say(notice(e.message, 'error'));
+    }
+    busy = false;
+    draw();
+  }
+
+  function draw() {
+    drawBar();
+    if (!data.supported) return body.replaceChildren(el('div', { class: 'empty' }, el('div', { class: 'empty-h' }, 'Windows only'), el('div', { class: 'empty-b' }, 'The Recycle Bin can only be managed on Windows.')));
+    if (!data.items.length) return body.replaceChildren(el('div', { class: 'empty' }, el('div', { class: 'empty-h' }, 'The Recycle Bin is empty'), el('div', { class: 'empty-b' }, 'Files you delete here and in File Explorer show up in this list.')));
+    const olderBtn = (days) => {
+      const ids = data.items.filter((i) => age(i) >= days).map((i) => i.id);
+      return el('button', { type: 'button', class: 'btn btn-outline btn-sm', disabled: !ids.length, title: ids.length ? `${plural(ids.length, 'item')} in the Recycle Bin for ${days}+ days` : `Nothing has been in the Recycle Bin for ${days} days`, onclick: () => { selected = new Set(ids); draw(); } }, `Select ${days}+ days old`);
+    };
+    const all = el('input', { type: 'checkbox', class: 'check', 'aria-label': 'Select all' });
+    all.checked = selected.size === data.items.length;
+    all.addEventListener('change', () => { selected = all.checked ? new Set(data.items.map((i) => i.id)) : new Set(); draw(); });
+    const empty = el('button', { type: 'button', class: 'btn btn-danger btn-sm', onclick: () => confirm(`Empty the Recycle Bin? All ${plural(data.count, 'item')} (${fmtBytes(data.bytes)}) will be gone for good.`, 'Empty it', () => run('empty', [data.items[0].id])) }, 'Empty Recycle Bin');
+    body.replaceChildren(
+      el('div', { class: 'org-actionbar' }, all, el('span', { class: 'org-count' }, `${plural(data.count, 'item')} · ${fmtBytes(data.bytes)} in the Recycle Bin${data.truncated ? ` (the newest ${data.items.length} are listed)` : ''}`), el('span', { class: 'spacer' }), olderBtn(30), olderBtn(7), empty),
+      el(
+        'div',
+        { class: 'box' },
+        ...data.items.map((i) => {
+          const box = el('input', { type: 'checkbox', class: 'check', 'aria-label': `Select ${i.name}` });
+          box.checked = selected.has(i.id);
+          box.addEventListener('change', () => { if (box.checked) selected.add(i.id); else selected.delete(i.id); drawBar(); all.checked = selected.size === data.items.length; });
+          const d = age(i);
+          return el(
+            'div',
+            { class: 'history-row' },
+            box,
+            el('div', { class: 'folder-main' }, el('div', {}, i.name), el('div', { class: 'folder-meta', title: i.original }, `${i.is_dir ? 'Folder' : fmtBytes(i.size)} · from ${i.folder} · deleted ${d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`}`)),
+          );
+        }),
+      ),
+    );
+  }
+
+  async function load() {
+    try {
+      data = await api.bin();
+      selected = new Set([...selected].filter((id) => data.items.some((i) => i.id === id)));
+      draw();
+    } catch (e) {
+      body.replaceChildren(notice(e.message, 'error'));
+    }
+  }
+  load();
+  return { node: el('div', { class: 'org-pane' }, note, bar, body) };
 }
 
 // ---------------------------------------------------------------- page
@@ -714,7 +875,7 @@ export function render(container, { navigate } = {}) {
   });
   seg.append(...buttons);
   container.replaceChildren(
-    el('header', { class: 'page-head' }, el('div', {}, el('h1', { class: 'page-title' }, 'Organize'), el('div', { class: 'page-sub' }, 'Clean up folders, move and delete files. Nothing changes until you say so, and changes can be undone.')), seg),
+    el('header', { class: 'page-head' }, el('div', {}, el('h1', { class: 'page-title' }, 'Organize'), el('div', { class: 'page-sub' }, 'Clean up folders, move and delete files. Nothing changes until you say so; moves can be undone and deletes go to the Recycle Bin.')), seg),
     holder,
   );
   function show(k) {
@@ -724,7 +885,7 @@ export function render(container, { navigate } = {}) {
       b.setAttribute('aria-selected', String(TABS[i][0] === k));
       b.setAttribute('aria-checked', String(TABS[i][0] === k));
     });
-    const pane = k === 'clean' ? cleanPane() : k === 'files' ? filesPane({ navigate }) : historyPane();
+    const pane = k === 'clean' ? cleanPane() : k === 'files' ? filesPane({ navigate }) : k === 'bin' ? binPane() : historyPane();
     holder.replaceChildren(pane.node);
   }
   show(tab);

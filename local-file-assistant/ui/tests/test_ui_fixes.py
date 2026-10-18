@@ -149,6 +149,8 @@ def _tidy_backend(page):
     return FakeBackend(page, overrides={
         "/organize/tidy/folders": {"folders": [{"key": "downloads", "label": "Downloads", "path": "C:\\Downloads"}]},
         "/organize/tidy": plan,
+        "/organize/tidy/start": {"job": "j1"},
+        "/organize/tidy/jobs/j1": {"state": "done", "phase": "", "done": 0, "total": None, "plan": plan, "error": None},
         "/organize/apply": applied,
     })
 
