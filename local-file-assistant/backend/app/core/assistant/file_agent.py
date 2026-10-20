@@ -25,7 +25,11 @@ log = logging.getLogger(__name__)
 
 MAX_CANDIDATES = 8
 MAX_READ = 3
-MAX_READ_OWNER = 5  # "my marksheet": keep reading until one in the user's name turns up
+MAX_READ_OWNER = 6  # "my marksheet": keep reading until one in the user's name turns up
+MAX_POOL_OWNER = 30  # candidates looked at (by name and by card) before reading any
+# Personal documents are PDFs, photos and Word files. Without this, "marksheet" matched markdown.test.js and
+# _markupbase.py, and "result" matched compare_bert_results.py.
+DOC_EXTS = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".docx", ".doc", ".txt"]
 MAX_CHUNKS_PER_FILE = 3
 MAX_FILE_BYTES = 50 * 1024 * 1024
 SNIPPET_CHARS = 240
@@ -165,6 +169,84 @@ def candidates(plan: dict, content_hits: list[dict] | None = None, mine: bool = 
             p = Path(hit["path"])
             found.append({"path": hit["path"], "name": p.name, "folder": str(p.parent), "ext": p.suffix.lower(), "size": 0, "modified": ""})
     return found[:MAX_CANDIDATES]
+
+
+_DATE_TIME = re.compile(r"\d{4}[-_.]\d{1,2}[-_.]\d{1,2}|\d{1,2}[-_.]\d{1,2}[-_.]\d{2,4}|\d{1,2}[.:]\d{2}(?:[.:]\d{2})?\s*(?:am|pm)?|wa\d{4}|img[-_]\d+", re.I)
+
+
+def names_class(file_name: str, n: int) -> bool:
+    """The file name says class n ("12 th.jpeg", "class 12 (1).jpg", "krish22 12 result.pdf", "10th&12th.pdf"), not as
+    part of a date, a time or a camera number ("WhatsApp Image 2026-10-15 at 12.03.39 AM.jpeg")."""
+    stem = _DATE_TIME.sub(" ", Path(file_name).stem.lower())
+    return bool(re.search(rf"(?<!\d){n}(?:\s*(?:th|vi|vin))?(?!\d)", stem))
+
+
+# Words in document file names that are not a person's name ("krish22 12 result" has one that is: "krish").
+_DOC_NAME_WORDS = set("""class std standard th st nd rd marksheet marksheets mark marks result results final scan scanned copy compressed
+cbse board hsc ssc certificate cert document documents doc docs img image images photo pic whatsapp wa screenshot new old
+original page pages part front back side and of the my me sem semester year exam exams admit card aadhaar aadhar pan dob
+grade grades report school senior secondary higher examination statement certified true attested pdf jpg jpeg png file
+vi vin wi xii xi x ii tc migration character transfer""".split())
+
+
+def name_hint(file_name: str, owner_name: str) -> int:
+    """0: the file name has the user's name in it, 1: no name in it ("12 th.jpeg"), 2: someone else's name in it
+    ("krish22 12 result.pdf", "tilak class 12.pdf"). Only an ordering hint: the document itself decides."""
+    stem = _DATE_TIME.sub(" ", Path(file_name).stem.lower())
+    words = [w for w in re.findall(r"[a-z]+", stem) if len(w) >= 3]
+    mine = {w for w in re.findall(r"[a-z]+", (owner_name or "").lower()) if len(w) >= 3}
+    if mine & set(words):
+        return 0
+    return 2 if any(w not in _DOC_NAME_WORDS for w in words) else 1
+
+
+_MARKSHEETISH = re.compile(r"\b(?:mark\s*sheets?|marks|results?|percentage|cgpa|grades?|report\s*card|board\s*exam)\b", re.I)
+
+
+def owner_pool(question: str, plan: dict, owner_name: str, content_hits: list[dict] | None = None) -> tuple[list[dict], list[dict]]:
+    """(candidates to read in order, files skipped unread because their card names someone else).
+
+    For "my class 12 marksheet" on a PC holding the marksheets of family and friends. Looked at by name (document
+    types only), by the class number alone ("12" also finds "12 th.jpeg" and "class 12.jpeg", which "12th" did not),
+    and by card (files already known to be in the user's name go first). Files whose card names another person are
+    not read at all."""
+    want_class = doc_kinds.asked_class(question)
+    exts = [e for e in (plan["exts"] or DOC_EXTS) if e in DOC_EXTS] or DOC_EXTS
+    pool: list[dict] = []
+    if owner_name:
+        mine = doc_photos.owned_by(owner_name, limit=MAX_POOL_OWNER)
+        if want_class is not None:  # only that class's documents, unless the card can't tell
+            mine = [m for m in mine if doc_kinds.class_signal(m.get("head", ""), want_class) >= 0]
+        pool += [m for m in mine if m["ext"] in exts]
+    words = [w for w in plan["keywords"] if not re.fullmatch(r"\d{1,2}(?:th|st|nd|rd|vi|vin)?|class|std|standard|xii|x", w)]
+    # names that say the class: "12 th.jpeg", "class 12.jpeg" (not "at 12.03.39 AM"). "show my marksheet" names no
+    # class: marksheets are usually saved as "class 10" / "12th", so both are looked at.
+    classes = [want_class] if want_class is not None else [12, 10] if _MARKSHEETISH.search(question) else []
+    for n in classes:
+        by_class = pc_access.find([str(n)] + words[:2], exts, None, limit=MAX_POOL_OWNER)
+        by_class += pc_access.find([str(n)], exts, None, limit=MAX_POOL_OWNER * 2)
+        pool += [c for c in by_class if names_class(c["name"], n)]
+    by_words = pc_access.find(plan["keywords"], exts, plan["after"], limit=MAX_POOL_OWNER)
+    if want_class is not None:  # a bare "12" in the search words also matches times and dates in photo names
+        by_words = [c for c in by_words if names_class(c["name"], want_class)
+                    or any(w in c["name"].lower() for w in words if len(w) > 2)]
+    pool += by_words
+    pool += _photo_hits({**plan, "keywords": plan["keywords"] + ([str(want_class)] if want_class else [])})
+    for hit in content_hits or []:
+        p = Path(hit["path"])
+        pool.append({"path": hit["path"], "name": p.name, "folder": str(p.parent), "ext": p.suffix.lower(), "size": 0, "modified": ""})
+    pool = [c for c in pool if c["ext"] in exts or c.get("via")]
+    pool = list({c["path"]: c for c in reversed(pool)}.values())[::-1]  # first occurrence wins
+    if not owner_name:
+        return pool[:MAX_CANDIDATES], []
+    people = doc_photos.people_for([c["path"] for c in pool])
+    theirs = [c for c in pool if c["path"] in people and not owner.same_person(people[c["path"]], owner_name)]
+    ours = [c for c in pool if c["path"] in people and owner.same_person(people[c["path"]], owner_name)]
+    unknown = [c for c in pool if c["path"] not in people]
+    for c in theirs:
+        c["person"] = people[c["path"]]
+    unknown.sort(key=lambda c: name_hint(c["name"], owner_name))  # stable: keeps the search order within each group
+    return ours + unknown, theirs
 
 
 # ---------- 3. choose ----------
@@ -352,7 +434,10 @@ def read_chunks(path: str, question: str, terms: list[str], owner_name: str | No
         ranked = sorted(parsed, key=lambda it: (-score(it)[0], -score(it)[1], it[0]))[:MAX_CHUNKS_PER_FILE]
     whose: dict = {}
     if owner_name is not None:
-        verdict, people = owner.check("\n".join(c.text for _, c in parsed), owner_name)
+        whole = "\n".join(c.text for _, c in parsed)
+        if p.suffix.lower() in doc_photos.CARD_EXTS:
+            doc_photos.remember(str(p), whole)  # next time: known whose it is without reading it again
+        verdict, people = owner.check(whole, owner_name)
         whose = {"owner": verdict, "people": people}
         if verdict == "yes":  # make sure the passage with the name and its numbers is among those read
             named = [it for it in parsed if owner.contains(it[1].text, owner_name)]
@@ -402,20 +487,32 @@ def gather(question: str, content_hits: list[dict] | None = None, owner_name: st
     mine = owner_name is not None
     yield {"step": "plan", "detail": "Looking for: " + (", ".join(plan["keywords"]) or "(no search words)")
            + (f" (in the name of {owner_name})" if owner_name else "")}
-    cands = [c for c in candidates(plan, content_hits, mine=mine) if c["path"] not in set(exclude)]
+    others: list[dict] = []
+    if mine:
+        cands, theirs = owner_pool(question, plan, owner_name, content_hits)
+        cands = [c for c in cands if c["path"] not in set(exclude)]
+        others = [{"name": c["name"], "path": c["path"], "people": [c["person"]]} for c in theirs]
+    else:
+        cands = [c for c in candidates(plan, content_hits) if c["path"] not in set(exclude)]
     photos = sum(1 for c in cands if c.get("via") == "photo")
+    known = sum(1 for c in cands if c.get("via") == "card")
     yield {"step": "found", "detail": f"{len(cands)} file(s) on this PC match by name or content"
-           + (f", {photos} of them document photo(s)" if photos else ""), "files": [c["name"] for c in cands]}
+           + (f", {known} already known to be in your name" if known else "")
+           + (f", {photos} of them document photo(s)" if photos else "")
+           + (f"; {len(others)} skipped (other people's)" if others else ""), "files": [c["name"] for c in cands][:20]}
     if not cands:
-        return {"chunks": [], "files": []}
-    if owner_name:  # the model's picks first, then the rest, until one in the user's name is found
-        first = choose(question, cands, MAX_READ)
-        picked = (first + [c for c in cands if c not in first])[:MAX_READ_OWNER]
+        return {"chunks": [], "files": [], **({"others": others} if mine else {})}
+    if owner_name:  # known to be the user's first, then the model's picks, then the rest, until one in their name
+        known_first = [c for c in cands if c.get("via") == "card"]
+        rest = [c for c in cands if c.get("via") != "card"]
+        first = choose(question, rest[:MAX_CANDIDATES], MAX_READ) if rest else []
+        picked = (known_first + first + [c for c in rest if c not in first])[:MAX_READ_OWNER]
+    elif mine:  # the name isn't known: read the best few and say whose they are
+        picked = choose(question, cands[:MAX_CANDIDATES])
     else:
         picked = choose(question, cands)
     chunks: list[dict] = []
     read: list[str] = []
-    others: list[dict] = []
     locked: list[str] = []
     for c in picked:
         got, problem = read_chunks(c["path"], question, plan["keywords"], owner_name=owner_name if mine else None)

@@ -18,12 +18,13 @@ _NAME = rf"{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,3}}"
 
 # Typed by the user. "i am ..." is left out on purpose: "i am in class 12" is not a name.
 _SAYS_NAME = re.compile(
-    rf"\bmy\s+(?:full\s+)?name\s+is\s+(?P<a>{_NAME})|\bmy\s+name'?s\s+(?P<c>{_NAME})"
+    rf"\bmy\s+(?:full\s+)?name\s+(?:is\s+|=\s*|:\s*)?(?P<a>{_NAME})|\bmy\s+name'?s\s+(?P<c>{_NAME})"
+    rf"|\bmyself\s+(?P<d>{_NAME})|^\s*name\s*[:=]\s*(?P<e>{_NAME})"
     rf"|\bmera\s+naam\s+(?P<b>{_NAME_WORD}(?:\s+{_NAME_WORD})?)\s+(?:hai|h)\b",
     re.I,
 )
 # Words that end a typed name: "my name is tarun verma and i want ..." -> "tarun verma".
-_STOP = {"and", "so", "but", "not", "please", "pls", "check", "find", "i", "im", "my", "the", "from", "in", "it", "is", "hai", "h",
+_STOP = {"is", "a", "an", "student", "from", "and", "so", "but", "not", "please", "pls", "check", "find", "i", "im", "my", "the", "from", "in", "it", "is", "hai", "h",
          "you", "your", "this", "that", "which", "who", "what", "why", "how", "to", "of", "for", "with", "then", "than", "also", "only",
          "marksheet", "file", "files", "pdf", "jpg", "roll", "no", "number", "class", "aur", "ka", "ki", "ke", "se", "me", "mein",
          "ok", "okay", "now", "there", "here", "sir", "bro"}
@@ -34,8 +35,20 @@ _FIELD = re.compile(
     r"applicant'?s?\s+name|\bname)\s*[:\-.]?\s*(?i:(?:mr|ms|miss|shri|smt|kumari|km)\.?\s+)?"
     r"(?P<n>[A-Z][A-Za-z.'-]+(?:[ \t]+[A-Z][A-Za-z.'-]+){0,4})",
 )
-# Labels that look like "name" but are someone else (a parent, the school) or not a person.
-_NOT_THE_PERSON = re.compile(r"(?:father|mother|guardian|relative|parent|husband|school|college|institute|board|bank|branch|file|user)'?s?\s*$", re.I)
+# Labels that look like "name" but are someone else (a parent, the school) or not a person. OCR mangles these
+# ("Father'g / Ouardian's Name"), so a few misspellings are listed too.
+_NOT_THE_PERSON = re.compile(r"(?:father|mother|guardian|ouardian|gardian|relative|parent|husband|school|college|institute|board|bank|branch|file|user)\W{0,4}\w{0,2}\W{0,3}$", re.I)
+# CBSE and most boards print no "Name:" label: "This is to certify that TARUN VERMA Roll No. 12626417". OCR misreads
+# "certify" ("cenify", "certity") and glues words ("NITISHKHUNTE").
+_CERTIFY = re.compile(
+    r"\b(?:c[eo]r?\w{1,3}f[yi]|ce\w{1,3}fy)\s*that\s+(?:(?:mr|ms|miss|shri|smt|kumari|km)\.?\s+)?"
+    r"(?P<n>[A-Z][A-Z.'\-]+(?:[ \t]+[A-Z][A-Z.'\-]+){0,4})(?=\s*(?:\d|roll|mother|father|s/o|d/o|son|daughter|date|has|\n|$))",
+    re.I,
+)
+# State boards (CGBSE): "... CHANDANKUMAR SAO WHOSE MOTHER'S NAME IS SMT. ..."
+_WHOSE = re.compile(r"(?P<n>(?:[A-Z][A-Z'\-]+[ \t]+){0,2}[A-Z][A-Z'\-]+)\s+WHOSE\s+(?:MOTHER|FATHER)")
+# A word that ends a name read from a document ("TILAK SAHU Rollno." -> "Tilak Sahu").
+_STOPS_NAME = re.compile(r"(?i)^(?:roll|mother|father|date|dob|class|school|sch00l|regn|whose|has|son|daughter|s/o|d/o|guardian)")
 _LABEL_WORDS = {"roll", "no", "application", "number", "relative", "relative's", "father", "father's", "mother", "mother's", "gender",
                 "class", "date", "dob", "school", "category", "address", "mobile", "email", "subject", "marks", "regn", "registration",
                 "seat", "enrolment", "of", "s/o", "d/o"}
@@ -56,7 +69,7 @@ def stated(message: str) -> str:
     m = _SAYS_NAME.search(message or "")
     if not m:
         return ""
-    got = _clean(m.group("a") or m.group("b") or m.group("c") or "")
+    got = _clean(m.group("a") or m.group("b") or m.group("c") or m.group("d") or m.group("e") or "")
     return got if 1 <= len(got.split()) <= 4 and len(got) >= 3 else ""
 
 
@@ -81,7 +94,7 @@ def get() -> str:
     try:
         from app.core.assistant import memory_store
 
-        sources += [m["text"] for m in memory_store.list_all()]
+        sources += [m["text"] for m in memory_store.list_all(status="active")]
     except Exception:
         pass
     for text in sources:
@@ -105,6 +118,15 @@ def named_people(text: str) -> list[str]:
     """Names in the document's name fields ("Candidate Name : NITISH KHUNTE" -> "Nitish Khunte"), first ones first."""
     flat = re.sub(r"[ \t]+", " ", text or "")
     out: list[str] = []
+    for m in [*_CERTIFY.finditer(flat), *_WHOSE.finditer(flat)]:
+        words = []
+        for w in m.group("n").split():
+            if _STOPS_NAME.match(w):
+                break
+            words.append(w)
+        name = " ".join(w.capitalize() for w in words[:4] if w.isupper() or len(w) > 1)
+        if len(name.replace(" ", "")) >= 4 and name not in out:
+            out.append(name)
     for m in _FIELD.finditer(flat):
         before = flat[max(0, m.start() - 20): m.start()]
         if _NOT_THE_PERSON.search(before):
@@ -120,11 +142,30 @@ def named_people(text: str) -> list[str]:
     return out[:3]
 
 
+def _squash(s: str) -> str:
+    return re.sub(r"[^a-z]", "", (s or "").lower())
+
+
+def same_person(a: str, b: str) -> bool:
+    """Two names are the same person, also when OCR glued the words ("TARUNVERMA") or slipped a letter."""
+    sa, sb = _squash(a), _squash(b)
+    if not sa or not sb:
+        return False
+    if sa == sb:
+        return True
+    from difflib import SequenceMatcher
+
+    return min(len(sa), len(sb)) >= 6 and SequenceMatcher(None, sa, sb).ratio() >= 0.88
+
+
 def contains(text: str, owner: str) -> bool:
-    """Every word of the owner's name appears in the text (any order, case, small OCR slips)."""
+    """Every word of the owner's name appears in the text (any order, case, small OCR slips), or the whole name
+    appears with its spaces lost ("TARUNVERMA")."""
     want = _words(owner)
     if not want:
         return False
+    if len(_squash(owner)) >= 6 and _squash(owner) in _squash(text):
+        return True
     have = set(_words(text or ""))
     return all(w in have or (len(w) >= 4 and any(_same(w, h) for h in have)) for w in want)
 
@@ -135,10 +176,10 @@ def check(text: str, owner: str | None = None) -> tuple[str, list[str]]:
     people = named_people(text)
     if not owner:
         return "unknown", people
+    if people:  # the document says whose it is: trust that over a name found elsewhere on it (a parent's, a sibling's)
+        return ("yes" if any(same_person(p, owner) for p in people[:1]) else "no"), people
     if contains(text, owner):
         return "yes", people
-    if people:
-        return "no", people
     return "unknown", people
 
 

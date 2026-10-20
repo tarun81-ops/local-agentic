@@ -18,9 +18,10 @@ KINDS = [
     ("id card", re.compile(r"identity card|\bid card\b|student id", re.I)),
 ]
 
+# Scans often lose the spaces ("SENIORSCHOOLCERTIFICATEEXAMINATION"), so the board phrases allow none.
 CLASS_TEXT = {
-    12: re.compile(r"senior\s+school|senior\s+secondary|higher\s+secondary|class\s*[-:]?\s*(?:xii|12)\b|\(\s*xii\s*\)|\b12th\b|\bhsc\b|intermediate", re.I),
-    10: re.compile(r"(?<!senior )(?<!higher )secondary\s+school\s+(?:examination|certificate)|class\s*[-:]?\s*(?:x|10)\b(?!\s*[+i])|\(\s*x\s*\)|\b10th\b|\bssc\b|high\s+school|matric", re.I),
+    12: re.compile(r"senior\s*school|senior\s*secondary|higher\s*secondary|10\s*\+\s*2|class\s*[-:]?\s*(?:xii|12)\b|\(\s*xii\s*\)|\b12th\b|\bhsc\b|intermediate", re.I),
+    10: re.compile(r"(?<!senior)(?<!senior )(?<!higher)(?<!higher )secondary\s*school\s*(?:examination|certificate)|class\s*[-:]?\s*(?:x|10)\b(?!\s*[+i])|\(\s*x\s*\)|\b10th\b|\bssc\b|high\s*school|matric", re.I),
 }
 CLASS_WORDS = {12: "class 12 12th hsc senior secondary", 10: "class 10 10th ssc secondary"}
 
