@@ -65,3 +65,12 @@ def corpus(tmp_path) -> Path:
 @pytest.fixture
 def db_paths(tmp_path):
     return tmp_path / "index.db", tmp_path / "lancedb"
+
+
+@pytest.fixture(autouse=True)
+def _no_background_card_scan(monkeypatch):
+    """The app starts the document-card scanner thread at startup (core/doc_photos.py). In tests it would read the
+    same temporary folders as the test with real OCR and race it; tests call doc_photos.run_once() themselves."""
+    from app.core import doc_photos
+
+    monkeypatch.setattr(doc_photos.PhotoWorker, "start", lambda self: False)
