@@ -19,12 +19,13 @@ import time
 from pathlib import Path
 
 from app.config import settings
-from app.core import pc_access
+from app.core import doc_kinds, doc_photos, owner, pc_access
 
 log = logging.getLogger(__name__)
 
 MAX_CANDIDATES = 8
 MAX_READ = 3
+MAX_READ_OWNER = 5  # "my marksheet": keep reading until one in the user's name turns up
 MAX_CHUNKS_PER_FILE = 3
 MAX_FILE_BYTES = 50 * 1024 * 1024
 SNIPPET_CHARS = 240
@@ -130,12 +131,33 @@ def understand(question: str) -> dict:
 
 # ---------- 2. look up ----------
 
-def candidates(plan: dict, content_hits: list[dict] | None = None) -> list[dict]:
-    """Catalog hits (best first), then files that content search already found, without duplicates."""
+def _photo_hits(plan: dict) -> list[dict]:
+    """Document photos whose OCR card matches (a marksheet saved as IMG-...-WA0122.jpg). Never raises."""
+    try:
+        return doc_photos.search(plan["keywords"], limit=MAX_CANDIDATES) if doc_photos.enabled() else []
+    except Exception:
+        log.exception("document photo search failed")
+        return []
+
+
+def candidates(plan: dict, content_hits: list[dict] | None = None, mine: bool = False) -> list[dict]:
+    """Catalog hits (best first), then files that content search already found, without duplicates.
+    Document photos (matched on their text, not their name) come first when the user asked for a photo/jpg,
+    and are mixed in after the best name matches for questions about the user's own documents."""
     recent = plan.get("recent", False)
-    found = pc_access.find(plan["keywords"], plan["exts"] or None, plan["after"], limit=MAX_CANDIDATES, recent=recent)
-    if not found and (plan["exts"] or plan["after"]):  # the model's filters may be too tight: retry without them
+    exts = plan["exts"] or []
+    wants_image = bool(exts) and all(e in _IMG for e in exts)
+    photos = _photo_hits(plan) if (wants_image or mine or not exts) else []
+    if exts:
+        photos = [p for p in photos if p["ext"] in exts]
+    found = pc_access.find(plan["keywords"], exts or None, plan["after"], limit=MAX_CANDIDATES, recent=recent)
+    if not found and not photos and (exts or plan["after"]):  # the model's filters may be too tight: retry without them
         found = pc_access.find(plan["keywords"], None, None, limit=MAX_CANDIDATES, recent=recent)
+    if wants_image:
+        found = photos + found
+    elif photos:
+        found = found[:2] + photos[:3] + found[2:] + photos[3:]
+    found = list({c["path"]: c for c in reversed(found)}.values())[::-1]  # first occurrence wins
     seen = {c["path"] for c in found}
     for hit in content_hits or []:
         if hit["path"] not in seen:
@@ -147,21 +169,22 @@ def candidates(plan: dict, content_hits: list[dict] | None = None) -> list[dict]
 
 # ---------- 3. choose ----------
 
-def choose(question: str, cands: list[dict]) -> list[dict]:
+def choose(question: str, cands: list[dict], n: int = MAX_READ) -> list[dict]:
     if len(cands) <= 1:
         return cands
-    listing = "\n".join(f"{i}. {c['name']}  (folder: {Path(c['folder']).name}; modified {c['modified'] or '?'})" for i, c in enumerate(cands, 1))
+    listing = "\n".join(f"{i}. {c['name']}  (folder: {Path(c['folder']).name}; modified {c['modified'] or '?'}"
+                        + ("; a photo whose text matches" if c.get("via") == "photo" else "") + ")" for i, c in enumerate(cands, 1))
     picks: list[int] = []
     try:
-        data = llm_json(CHOOSE_PROMPT.format(question=question[:500], listing=listing, n=MAX_READ))
+        data = llm_json(CHOOSE_PROMPT.format(question=question[:500], listing=listing, n=n))
         raw = data.get("pick")
         if isinstance(raw, list):
             picks = [n for n in raw if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(cands)]
     except Exception as exc:
         log.info("file agent: choosing model unavailable (%s); taking the top matches", exc)
-        return cands[:MAX_READ]
-    chosen = [cands[n - 1] for n in dict.fromkeys(picks)][:MAX_READ]
-    return chosen or cands[:MAX_READ]  # an empty pick must not mean "read nothing" when files matched by name
+        return cands[:n]
+    chosen = [cands[i - 1] for i in dict.fromkeys(picks)][:n]
+    return chosen or cands[:n]  # an empty pick must not mean "read nothing" when files matched by name
 
 
 # ---------- 4. read ----------
@@ -222,9 +245,62 @@ def _cache_put(p: Path, st, chunks) -> None:
         pass
 
 
-def read_chunks(path: str, question: str, terms: list[str]) -> tuple[list[dict], str]:
+OVERVIEW_CHUNKS = 6  # a summary needs the whole book's range, not the 3 passages that share the most words
+
+
+def focused(question: str, parsed: list) -> list | None:
+    """Passages for questions that word overlap gets wrong: a named page ("page 12", "last page") gets that page,
+    a summary gets passages spread evenly over the whole file. None = rank by shared words as usual.
+    parsed: [(index, chunk)] in reading order, chunk with .loc_kind / .loc_no / .text."""
+    from app.core import facts
+
+    page = facts.wanted_page(question)
+    located = [it for it in parsed if it[1].loc_kind in ("page", "slide")]
+    if page is not None and located:
+        nums = sorted({int(it[1].loc_no) for it in located})
+        target = nums[-1] if page == "last" else nums[0] if page == "first" else page
+        on_page = [it for it in located if int(it[1].loc_no) == target]
+        if on_page:
+            return on_page[:OVERVIEW_CHUNKS]
+    if facts.asks_overview(question) and parsed:
+        k = min(OVERVIEW_CHUNKS, len(parsed))
+        return [parsed[int(i * len(parsed) / k)] for i in range(k)]
+    return None
+
+
+MEANING_CANDIDATES = 40  # passages embedded when no word matches: all of a short file, a spread of a long book
+
+
+def by_meaning(question: str, parsed: list) -> list | None:
+    """The passages closest in meaning to the question, for when word overlap has nothing to go on: a question
+    in Hinglish about an English or Hindi document shares no words with it, and picking "the first three
+    passages" then answers from the wrong part. Uses the embedding model; None (fall back) if it isn't there."""
+    from app.core import ram
+    from app.core.search import vector_search
+
+    if ram.is_low():
+        return None
+    k = min(MEANING_CANDIDATES, len(parsed))
+    pool = parsed if len(parsed) <= k else [parsed[int(i * len(parsed) / k)] for i in range(k)]  # long book: spread
+    try:
+        import numpy as np
+
+        docs = np.asarray(vector_search.embed([c.text for _, c in pool], timeout=30), dtype=np.float32)
+        q = np.asarray(vector_search.embed_query([question], timeout=15)[0], dtype=np.float32)
+    except Exception as exc:
+        log.info("meaning-based passage pick skipped: %s", exc)
+        return None
+    docs /= np.linalg.norm(docs, axis=1, keepdims=True) + 1e-9
+    q /= np.linalg.norm(q) + 1e-9
+    best = np.argsort(-(docs @ q))[:MAX_CHUNKS_PER_FILE]
+    return [pool[i] for i in sorted(best)]
+
+
+def read_chunks(path: str, question: str, terms: list[str], owner_name: str | None = None) -> tuple[list[dict], str]:
     """(chunks, problem). Parses the file now and keeps the passages that share the most words with the
-    question. problem is "" on success, else a short reason shown in the step log."""
+    question. problem is "" on success, else a short reason shown in the step log.
+    owner_name: also say whose document it is, from the WHOLE text (the name is often not in the passages
+    kept): every chunk gets "owner" ("yes" | "no" | "unknown") and "people" (names in its name fields)."""
     ok, why = pc_access.can_read(path)
     if not ok:
         return [], why
@@ -244,7 +320,7 @@ def read_chunks(path: str, question: str, terms: list[str]) -> tuple[list[dict],
                 _cache_put(p, st, chunks_in)
         parsed = list(enumerate(chunks_in))
     except Exception as exc:
-        return [], f"Couldn't read it ({type(exc).__name__})."
+        return [], unreadable_reason(p, exc)
     if not parsed:
         from app.core.parsers import image_parser
 
@@ -256,41 +332,109 @@ def read_chunks(path: str, question: str, terms: list[str]) -> tuple[list[dict],
     if words & _MARKS_WORDS:
         words |= _MARKS_EVIDENCE  # the table of marks never says "class 10" or "percentage"; it says subjects and totals
 
+    wanted_class = doc_kinds.asked_class(question)
+    if wanted_class is not None:  # "10th&12th.pdf": the class-12 page for a class-12 question, never the other one
+        signals = {it[0]: doc_kinds.class_signal(it[1].text, wanted_class) for it in parsed}
+        if any(v > 0 for v in signals.values()):
+            parsed = [it for it in parsed if signals[it[0]] >= 0]
+            right = {it[1].loc_no for it in parsed if signals[it[0]] > 0}  # the rest of that page belongs with it
+            parsed = [it for it in parsed if signals[it[0]] > 0 or it[1].loc_no in right] or parsed
+
     def score(item):
         low = item[1].text.lower()
         digits = sum(ch.isdigit() for ch in low) / max(1, len(low))
         return (sum(1 for w in words if w in low), digits)  # facts live in the denser, number-heavy passage
 
-    ranked = sorted(parsed, key=lambda it: (-score(it)[0], -score(it)[1], it[0]))[:MAX_CHUNKS_PER_FILE]
+    ranked = focused(question, parsed)
+    if ranked is None and parsed and max(score(it)[0] for it in parsed) == 0:
+        ranked = by_meaning(question, parsed)  # no shared word at all (Hinglish question, Hindi or English file)
+    if ranked is None:
+        ranked = sorted(parsed, key=lambda it: (-score(it)[0], -score(it)[1], it[0]))[:MAX_CHUNKS_PER_FILE]
+    whose: dict = {}
+    if owner_name is not None:
+        verdict, people = owner.check("\n".join(c.text for _, c in parsed), owner_name)
+        whose = {"owner": verdict, "people": people}
+        if verdict == "yes":  # make sure the passage with the name and its numbers is among those read
+            named = [it for it in parsed if owner.contains(it[1].text, owner_name)]
+            if named and not any(it[0] == named[0][0] for it in ranked):
+                ranked = [named[0], *ranked[: MAX_CHUNKS_PER_FILE - 1]]
     out = []
     for n, c in sorted(ranked, key=lambda it: it[0]):
         out.append({
             "path": str(p), "name": p.name, "root": None, "loc_kind": c.loc_kind, "loc_no": c.loc_no, "chunk_no": n,
-            "text": c.text, "snippet": _snippet(c.text, sorted(words)), "match": "pc",
+            "text": c.text, "snippet": _snippet(c.text, sorted(words)), "match": "pc", **whose,
         })
     return out, ""
 
 
+# ---------- files that can't be read ----------
+
+LOCKED = "Password-protected"
+
+
+def unreadable_reason(p: Path, exc: Exception) -> str:
+    """A reason the user can act on, never "[Errno 22]" or a Python class name."""
+    from app.core.parsers.pdf_parser import LockedPdf
+
+    if isinstance(exc, LockedPdf) or "encrypted" in str(exc).lower():
+        return f"{LOCKED}: tell me \u201cthe password is \u2026\u201d to read it (used only until the app closes, never saved)."
+    low = str(p).lower()
+    if isinstance(exc, OSError) and (exc.errno in (5, 22) or getattr(exc, "winerror", None) in (362, 389, 390, 395, 396)):
+        if "crossdevice" in low or "\\storage\\" in low or "/storage/" in low:
+            return "It is on your phone (Phone Link / CrossDevice) and can't be opened right now: connect the phone, then ask again."
+        return "It is an online-only cloud file (OneDrive etc.), not downloaded to this PC: open it once in File Explorer, then ask again."
+    if isinstance(exc, PermissionError):
+        return "Windows won't let the app open it (another program has it open, or it needs admin rights)."
+    if isinstance(exc, FileNotFoundError):
+        return "It was moved or deleted since the last scan."
+    return "It can't be opened (the file may be damaged or in a format the app can't read)."
+
+
 # ---------- the whole plan ----------
 
-def gather(question: str, content_hits: list[dict] | None = None):
+def gather(question: str, content_hits: list[dict] | None = None, owner_name: str | None = None, exclude: tuple = ()):
     """Generator of progress dicts ({"step": ..., "detail": ...}); returns (via StopIteration.value)
-    {"chunks": [...], "files": [...]}. The caller streams the progress to the UI."""
+    {"chunks": [...], "files": [...], "others": [{"name", "path", "people"}]}. The caller streams the progress.
+
+    owner_name (set for questions about the user's own documents): read up to MAX_READ_OWNER files, stop at the
+    first one in the user's name, and leave out files that are clearly someone else's ("others")."""
     plan = understand(question)
-    yield {"step": "plan", "detail": "Looking for: " + (", ".join(plan["keywords"]) or "(no search words)")}
-    cands = candidates(plan, content_hits)
-    yield {"step": "found", "detail": f"{len(cands)} file(s) on this PC match by name or content", "files": [c["name"] for c in cands]}
+    mine = owner_name is not None
+    yield {"step": "plan", "detail": "Looking for: " + (", ".join(plan["keywords"]) or "(no search words)")
+           + (f" (in the name of {owner_name})" if owner_name else "")}
+    cands = [c for c in candidates(plan, content_hits, mine=mine) if c["path"] not in set(exclude)]
+    photos = sum(1 for c in cands if c.get("via") == "photo")
+    yield {"step": "found", "detail": f"{len(cands)} file(s) on this PC match by name or content"
+           + (f", {photos} of them document photo(s)" if photos else ""), "files": [c["name"] for c in cands]}
     if not cands:
         return {"chunks": [], "files": []}
-    picked = choose(question, cands)
+    if owner_name:  # the model's picks first, then the rest, until one in the user's name is found
+        first = choose(question, cands, MAX_READ)
+        picked = (first + [c for c in cands if c not in first])[:MAX_READ_OWNER]
+    else:
+        picked = choose(question, cands)
     chunks: list[dict] = []
     read: list[str] = []
+    others: list[dict] = []
+    locked: list[str] = []
     for c in picked:
-        got, problem = read_chunks(c["path"], question, plan["keywords"])
-        if got:
-            chunks.extend(got)
-            read.append(c["path"])
-            yield {"step": "read", "detail": f"Read {c['name']}"}
-        else:
+        got, problem = read_chunks(c["path"], question, plan["keywords"], owner_name=owner_name if mine else None)
+        if not got:
+            if problem.startswith(LOCKED):
+                locked.append(c["path"])
             yield {"step": "skip", "detail": f"Skipped {c['name']}: {problem}"}
-    return {"chunks": chunks, "files": read}
+            continue
+        verdict = got[0].get("owner")
+        if owner_name and verdict == "no":
+            others.append({"name": c["name"], "path": c["path"], "people": got[0].get("people", [])})
+            yield {"step": "skip", "detail": f"Skipped {c['name']}: it is in the name of {', '.join(got[0].get('people') or ['someone else'])}"}
+            continue
+        chunks.extend(got)
+        read.append(c["path"])
+        yield {"step": "read", "detail": f"Read {c['name']}" + (" (in your name)" if verdict == "yes" else "")}
+        if owner_name and verdict == "yes":
+            break
+    if owner_name and any(c.get("owner") == "yes" for c in chunks):
+        chunks = [c for c in chunks if c.get("owner") == "yes"]
+        read = list(dict.fromkeys(c["path"] for c in chunks))
+    return {"chunks": chunks, "files": read, "others": others, "locked": locked}

@@ -35,6 +35,12 @@ def embed(texts: list[str], timeout: float = 120) -> list[list[float]]:
     return vectors
 
 
+def embed_query(texts: list[str], timeout: float = 120) -> list[list[float]]:
+    """Embeddings for search questions. Ollama's embedders take questions and documents alike, so this is
+    embed(); it exists so callers name what they embed (the OpenVINO build adds a query instruction here)."""
+    return embed(texts, timeout=timeout)
+
+
 def search(table, query: str, limit: int = 8, root: str | None = None) -> list[dict]:
     # A short timeout: search must stay usable when the embedder is slow; keyword results still come back.
     return _table_search(table, embed([query], timeout=15)[0], limit, root)

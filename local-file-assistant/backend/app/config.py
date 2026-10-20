@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     # STORE_FILE_TEXT=true in backend\.env to bring back the index (faster answers, search inside files,
     # but it keeps a copy of the text that grows with your files).
     store_file_text: bool = False
+    # Names-only mode: OCR each photo once and keep a ~400-character card, so a marksheet saved as
+    # IMG-20250626-WA0122.jpg can be found (core/doc_photos.py). Needs whole-PC access and RapidOCR.
+    doc_photo_scan: bool = True
+    # The answer prompt (rules + passages + recent chat) is kept under this many characters. Ollama's default
+    # context window is a few thousand tokens and it drops the START of a longer prompt without an error,
+    # which silently loses the rules and the first passages. Hindi text counts 3x (more tokens per letter).
+    max_prompt_chars: int = 10000
 
     # Describe images with the vision model while indexing (slow on CPU; OCR works without it).
     caption_images: bool = False

@@ -26,6 +26,7 @@ APPEARANCE = {"theme": "system", "accent": "red", "font_scale": 1.0, "overlay_co
 
 DEFAULTS: dict = {
     "profile": "",
+    "owner_name": "",  # the user's own name, from "my name is ..." in chat: picks their documents over other people's
     "answer_style": "concise",
     "language": "auto",
     "cite_pages": True,
@@ -161,6 +162,10 @@ def _check(key: str, value):
         value = value.strip()
         if len(value) > PROFILE_MAX:
             raise ValueError(f"About me can be at most {PROFILE_MAX} characters (yours is {len(value)}).")
+    elif key == "owner_name":
+        if not isinstance(value, str) or len(value.strip()) > 60:
+            raise ValueError("Your name must be text of at most 60 characters.")
+        value = " ".join(value.split())
     elif key in _CHOICES:
         if value not in _CHOICES[key]:
             raise ValueError(f"{key} must be one of: {', '.join(_CHOICES[key])}.")
