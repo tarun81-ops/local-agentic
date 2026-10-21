@@ -1,0 +1,221 @@
+import '@fontsource/archivo/400.css';
+import '@fontsource/archivo/500.css';
+import '@fontsource/archivo/700.css';
+import '@fontsource/archivo/900.css';
+import '@fontsource/space-mono/400.css';
+import '@fontsource/space-mono/700.css';
+import './style.css';
+
+import { api, waitForBackend } from './api.js';
+import { el, notice } from './components/common.js';
+import { mascot } from './components/mascot.js';
+import { applyCached, loadAppearance } from './appearance.js';
+import { renderSidebar } from './components/sidebar.js';
+import { workspaceDialog } from './components/workspace-dialog.js';
+import { render as renderChat } from './pages/chat.js';
+import { render as renderFind } from './pages/find.js';
+import { render as renderOrganize } from './pages/organize.js';
+import { render as renderSearch } from './pages/search.js';
+import { render as renderSettings } from './pages/settings-shell.js';
+import { render as renderSetup } from './pages/setup.js';
+
+applyCached();
+
+const PAGES = { chat: renderChat, find: renderFind, search: renderSearch, organize: renderOrganize, settings: renderSettings, setup: renderSetup };
+// Index and Memory now live inside Settings as tabs; old links ("Go to Index", the tray) still land there.
+const MOVED = { index: 'files', memory: 'memory' };
+
+const sidebar = document.getElementById('sidebar');
+const content = document.getElementById('content');
+const state = { page: 'chat', chatId: null, openChat: null, prefill: null, collections: [], recent: [], status: { connected: false, model: '' }, cleanup: null, ready: false, workspaces: [], workspace: savedWorkspace() };
+
+// The workspace you were in, kept per PC in this browser profile (a convenience; null = "All files").
+function savedWorkspace() {
+  try {
+    return Number(localStorage.getItem('lfa.workspace')) || null;
+  } catch {
+    return null;
+  }
+}
+
+function drawSidebar() {
+  renderSidebar(sidebar, {
+    active: state.page,
+    onSelect: (id) => show(id),
+    onNewChat: () => show('chat', { chatId: null }),
+    recent: state.recent,
+    onOpenChat: (id) => show('chat', { chatId: id }),
+    onDeleteChat: deleteChat,
+    onClearChats: clearChats,
+    openChat: state.page === 'chat' ? state.openChat : null,
+    status: state.status,
+    collections: state.collections,
+    onOpenCollection: (c) => show('search', { prefill: { collectionId: c.id } }),
+    workspaces: state.workspaces,
+    workspace: state.workspace,
+    onWorkspace: switchWorkspace,
+    onNewWorkspace: () => workspaceDialog({ onCreated: async (ws) => { await refreshWorkspaces(); switchWorkspace(ws.id); } }),
+    onDeleteWorkspace: deleteWorkspace,
+  });
+}
+
+async function refreshWorkspaces() {
+  try {
+    state.workspaces = (await api.workspaces()).workspaces;
+  } catch { /* keep the list we have */ }
+  if (state.workspace && !state.workspaces.some((w) => w.id === state.workspace)) state.workspace = null; // deleted elsewhere
+  drawSidebar();
+}
+
+// Each workspace has its own chats; switching starts a new chat there.
+function switchWorkspace(id) {
+  state.workspace = id || null;
+  try {
+    localStorage.setItem('lfa.workspace', String(state.workspace || ''));
+  } catch { /* remembered for this session only */ }
+  state.recent = [];
+  show('chat', { chatId: null });
+  refreshRecent();
+}
+
+async function deleteWorkspace(ws) {
+  if (!confirm(`Delete the workspace "${ws.name}"? Its chats move to All files. No file on your PC is deleted.`)) return;
+  try {
+    await api.deleteWorkspace(ws.id);
+  } catch { /* the list below shows what is left */ }
+  await refreshWorkspaces();
+  switchWorkspace(null);
+}
+
+async function refreshCollections() {
+  try {
+    state.collections = (await api.collections()).collections.filter((c) => c.pinned);
+  } catch { /* keep the list we have */ }
+  drawSidebar();
+}
+
+async function refreshRecent(openId) {
+  if (openId != null) state.openChat = openId; // a new chat got its id with its first reply
+  try {
+    state.recent = (await api.conversations(state.workspace)).conversations;
+  } catch { /* keep the list we have */ }
+  drawSidebar();
+}
+
+// Deleting the chat on screen starts a new one, so the next question can't go to a deleted chat.
+async function deleteChat(id) {
+  try {
+    await api.deleteConversation(id);
+  } catch { /* the list below shows what is left */ }
+  state.recent = state.recent.filter((c) => c.id !== id);
+  if (state.page === 'chat' && state.openChat === id) show('chat', { chatId: null });
+  refreshRecent();
+}
+
+async function clearChats() {
+  if (!confirm('Delete all the chats listed here? This can’t be undone.')) return;
+  const ids = state.recent.map((c) => c.id);
+  await Promise.allSettled(ids.map((id) => api.deleteConversation(id)));
+  state.recent = [];
+  if (state.page === 'chat' && ids.includes(state.openChat)) show('chat', { chatId: null });
+  refreshRecent();
+}
+
+// One-time move of the old browser-stored chats into the backend's conversation store.
+async function importOldChats() {
+  try {
+    const old = JSON.parse(localStorage.getItem('lfa.chats') || '[]');
+    if (old.length) await api.importConversations(old);
+    localStorage.removeItem('lfa.chats');
+  } catch { /* try again next launch */ }
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api.settings();
+    state.status = { connected: s.ollama.connected, model: s.model };
+  } catch {
+    state.status = { connected: false, model: '' };
+  }
+  drawSidebar();
+}
+
+function show(page, { chatId, prefill } = {}) {
+  if (MOVED[page]) {
+    prefill = { ...(prefill || {}), tab: MOVED[page] };
+    page = 'settings';
+  }
+  state.page = PAGES[page] ? page : 'chat';
+  if (!state.ready) {
+    // boot() shows the requested page once the backend is up; keep the tab or search it asked for.
+    state.prefill = prefill ?? null;
+    return;
+  }
+  state.cleanup?.();
+  if (state.page === 'chat') state.chatId = state.openChat = chatId ?? null;
+  state.prefill = prefill ?? null;
+  drawSidebar();
+  content.dataset.page = state.page;
+  state.cleanup =
+    PAGES[state.page](content, {
+      chatId: state.chatId,
+      prefill: state.prefill,
+      onCollectionsChanged: refreshCollections,
+      navigate: show,
+      onChatsChanged: refreshRecent,
+      workspaceId: state.workspace,
+      onStatusChanged: refreshStatus,
+    }) || null;
+}
+
+async function boot() {
+  drawSidebar();
+  const title = [...'Local File Assistant'].map((ch, i) => el('span', { style: `--i:${i}` }, ch));
+  content.replaceChildren(
+    el('div', { class: 'boot splash' },
+      el('div', { class: 'splash-burst', 'aria-hidden': 'true' }),
+      mascot({ size: 132, mood: 'listening', label: 'Lumi, your local file assistant' }),
+      el('div', { class: 'splash-title', role: 'heading', 'aria-level': '1', 'aria-label': 'Local File Assistant' }, title),
+      el('div', { class: 'splash-sub' }, 'Starting the local backend… the first start can take a minute'),
+    ),
+  );
+  // Keep the splash up briefly (about 0.9s) so the intro can play, even when the backend is already running.
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const [up] = await Promise.all([waitForBackend(), new Promise((r) => setTimeout(r, reduce ? 0 : 900))]);
+  if (!up) {
+    content.replaceChildren(
+      el('div', { class: 'boot' },
+        mascot({ size: 96, mood: 'worried', label: 'Lumi looks worried' }),
+        notice('The local backend didn’t start. Run scripts\\setup.ps1 once, then restart the app.', 'error'),
+      ),
+    );
+    return;
+  }
+  loadAppearance();
+  await importOldChats();
+  state.ready = true;
+  try {
+    if (!(await api.setupStatus()).done) state.page = 'setup'; // first launch: the setup wizard
+  } catch { /* setup stays reachable from Settings */ }
+  show(state.page, { prefill: state.prefill });
+  refreshRecent();
+  refreshWorkspaces();
+  refreshCollections();
+  refreshStatus();
+  setInterval(refreshStatus, 30000);
+}
+
+// An update downloaded in the background (electron/updates.js): offer the restart, never restart by ourselves.
+function updateReady(version) {
+  if (!version || document.querySelector('.update-bar')) return;
+  const bar = el('div', { class: 'update-bar', role: 'status' },
+    el('span', {}, `Update ${version} is ready. Restart to install it?`),
+    el('button', { type: 'button', class: 'btn btn-primary btn-sm', onclick: () => window.lfa.installUpdate() }, 'Restart now'),
+    el('button', { type: 'button', class: 'btn btn-outline btn-sm', onclick: () => bar.remove() }, 'Later'));
+  document.body.append(bar);
+}
+window.lfa.onUpdateReady(updateReady);
+window.lfa.updates().then((u) => updateReady(u?.ready)).catch(() => {});
+
+window.lfa.onNavigate((page) => show(page));
+boot();
