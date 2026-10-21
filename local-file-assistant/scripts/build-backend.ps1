@@ -85,6 +85,10 @@ try {
   if (-not $parsed.when -or $parsed.title -ne "Call mom") { throw "Date parsing failed in the frozen backend" }
   $voice = Invoke-RestMethod "http://127.0.0.1:$port/voice/status" -Headers $headers
   Write-Host "Assistant smoke test OK (conversations, memory, tasks, dates). Voice models present: stt=$($voice.stt.available) tts=$($voice.tts.available)"
+  # First-run setup answers (routes_setup.py was bundled) and says what a fresh PC is missing.
+  $setup = Invoke-RestMethod "http://127.0.0.1:$port/setup/status" -Headers $headers
+  if ($null -eq $setup.missing -or $setup.done) { throw "/setup/status is wrong in the frozen backend" }
+  Write-Host "Setup status OK. Engine: $($setup.engine.state). Missing: $($setup.missing -join ', ')"
   try { Invoke-RestMethod "http://127.0.0.1:$port/settings" | Out-Null; throw "API answered without a token" }
   catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw } }
 } finally {

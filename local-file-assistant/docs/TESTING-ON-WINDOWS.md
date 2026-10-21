@@ -81,10 +81,24 @@ Keep the `eval\results\*.json` file: it's the baseline to compare the next model
 `build-backend.ps1` refuses to ship `.env` or any index data, and starts the frozen backend
 once (health + token check) before electron-builder runs.
 
-- [ ] Install `ui\release\Local File Assistant Setup *.exe` on a Windows account with no Python.
+- [ ] Install `ui\release\LocalFileAssistant-Setup-*.exe` on a **fresh Windows user with no Python and no Ollama**
+      (Settings > Accounts > Other users > Add account; `where python` and `where ollama` find nothing).
+- [ ] First launch opens SET UP. MODEL ENGINE says MISSING; DOWNLOAD OLLAMA opens ollama.com/download in the browser
+      (the app runs no installer). Install Ollama, CHECK AGAIN: READY.
+- [ ] MODEL: DOWNLOAD shows progress, CANCEL stops it, DOWNLOAD again finishes. FILES & PC ACCESS: turn on.
+      TRY IT: an example question opens Chat and gets an answer.
+- [ ] Quit Ollama from its tray icon, Settings > RUN SETUP AGAIN > MODEL ENGINE: says NOT RUNNING and to open it
+      from the Start menu.
+- [ ] Quit and start again: the wizard doesn't come back.
 - [ ] Repeat the checks in section 2 in the installed app.
 - [ ] Settings > LAUNCH AT STARTUP on, sign out and in: app starts in the tray.
 - [ ] Logs exist: `%APPDATA%\LocalFileAssistant\logs\backend.log` and `%APPDATA%\Local File Assistant\logs\main.log`.
+- [ ] Update from the previous version (docs/RELEASING.md): install release N, publish N+1, start N. Within a minute
+      "Update N+1 is ready" appears bottom right. LATER hides it and the app keeps running; quitting from the tray
+      installs it. Start again: Settings shows N+1, chats and settings are still there, the wizard doesn't come back.
+- [ ] Settings > Privacy > CHECK FOR APP UPDATES off: `%APPDATA%\Local File Assistant\updates.json` says
+      `"enabled":false`, the switch is still off after a restart, and with `"last"` set to 0 in that file and the app
+      restarted, `main.log` gets no update lines (no request to github.com).
 
 ## 4. Upgrading an old index
 
