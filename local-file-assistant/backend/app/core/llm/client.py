@@ -91,7 +91,13 @@ def parse_json_object(text: str) -> dict:
 
 
 def get_client() -> OpenAI:
-    """Ollama's OpenAI-compatible endpoint. Swap base_url to move to OpenVINO Model Server."""
+    """Ollama's OpenAI-compatible endpoint, or the other OpenAI-compatible server switched on in Settings > Model
+    (core/llm/external.py)."""
+    from app.core.llm import external
+
+    ext = external.active()
+    if ext:
+        return OpenAI(base_url=ext["url"], api_key="unused", timeout=httpx.Timeout(settings.llm_timeout_s, connect=5), max_retries=0)
     # No retries: a second attempt doubles the wait, and the caller reports the failure anyway.
     return OpenAI(
         base_url=settings.ollama_base_url,
@@ -103,7 +109,10 @@ def get_client() -> OpenAI:
 
 def current_model() -> str:
     """The model picked in Settings (saved in the data dir), else OLLAMA_MODEL."""
-    return prefs.get("model") or settings.ollama_model
+    from app.core.llm import external
+
+    ext = external.active()
+    return ext["model"] if ext else prefs.get("model") or settings.ollama_model
 
 
 def set_model(name: str) -> None:

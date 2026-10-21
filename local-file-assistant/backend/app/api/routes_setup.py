@@ -13,8 +13,9 @@ import time
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.config import settings
 from app.core import pc_access, prefs, ram
@@ -25,7 +26,9 @@ router = APIRouter(prefix="/setup", tags=["setup"])
 
 OLLAMA_DOWNLOAD = "https://ollama.com/download"
 # Approximate download sizes (Ollama reports the exact total once the pull starts), for the Download button.
-SIZES_MB = {"qwen3-vl:2b-instruct": 1890, "granite-embedding:278m": 562}
+SIZES_MB = {"qwen3-vl:2b-instruct": 1890, "granite-embedding:278m": 562, "qwen3-vl:4b-instruct": 3300}
+# What Settings > Model offers to download. The 4B is bigger than the default: offered, never recommended.
+CATALOG = [{"name": "qwen3-vl:2b-instruct", "label": "Qwen3-VL 2B"}, {"name": "qwen3-vl:4b-instruct", "label": "Qwen3-VL 4B"}]
 
 
 def recommended_chat(total_mb: int) -> dict:
@@ -123,7 +126,8 @@ def _run(items: list[dict]) -> None:
         _job.update(status="failed", detail="The download stopped: Ollama didn't answer. Check that Ollama is running and the internet connection works, then click Download again." if isinstance(exc, httpx.HTTPError) else f"The download stopped: {exc}. Click Download to try again.")
 
 
-def start_pull() -> dict:
+def start_pull(items: list[dict] | None = None) -> dict:
+    """items: what to pull; None = whatever setup still needs (plan())."""
     with _lock:
         if _job["status"] == "running":
             return dict(_job)
@@ -132,7 +136,7 @@ def start_pull() -> dict:
             _job.clear()
             _job.update(status="failed", detail="Ollama isn't running. Finish the Model engine step first.")
             return dict(_job)
-        items = plan(status["models"])
+        items = items if items is not None else plan(status["models"])
         if not items:
             _job.clear()
             _job.update(status="done", percent=100, detail="The models are already downloaded.")
@@ -179,11 +183,20 @@ def get_status():
     }
 
 
+class PullRequest(BaseModel):
+    repo: str | None = None  # a CATALOG model (Settings > Model); none = what setup still needs
+
+
 @router.post("/model/pull")
-def pull():
+def pull(req: PullRequest | None = None):
     """Starts the download (or joins the running one) and streams `progress` events until it ends with
     `done`, `failed` or `cancelled`. Leaving the page doesn't stop it; POST /setup/model/pull/cancel does."""
-    first = start_pull()
+    items = None
+    if req and req.repo:
+        if req.repo not in {m["name"] for m in CATALOG}:
+            raise HTTPException(400, "That model isn't in the list this app can download.")
+        items = [{"name": req.repo, "label": req.repo, "repo": req.repo, "size_mb": SIZES_MB.get(req.repo, 0), "command": f"ollama pull {req.repo}"}]
+    first = start_pull(items)
 
     def stream():
         state = first
