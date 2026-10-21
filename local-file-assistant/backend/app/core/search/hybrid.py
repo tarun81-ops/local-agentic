@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 
 from app.config import settings
-from app.core import pc_access
 from app.core.assistant import learning
 from app.core.search import fts_search, reranker, vector_search
 from app.db import sqlite_fts, vector_store
@@ -92,14 +91,13 @@ def hybrid_search(q: str, root: str | None = None, limit: int = 6, within: list[
     rerank_on = reranker.available()
     # A wider pool lets a habitually opened file rise into view even when the re-ranker is off.
     pool = max(limit, RERANK_POOL) if (rerank_on or settings.open_prior_max_shift > 0) else limit
-    # within: a workspace's folders. ponytail: filtered after search from a 4x pool; a SQL path-prefix filter if
-    # a workspace's folders hold a small share of a very large index and its hits fall outside the pool.
-    if within:
-        pool *= 4
+    # within: a workspace's folders. Both searches filter them before their top hits are cut (a small workspace in a
+    # big index would otherwise get no hits and FILES ONLY would refuse): keyword search in SQL, vector search with
+    # one deeper retry (vector_search.search).
     conn = sqlite_fts.connect(settings.db_path)
     try:
         skip = _hidden_roots_when_off(conn)
-        fts_results = fts_search.search(conn, q, limit=pool + 2, root=root, skip_roots=skip or None)
+        fts_results = fts_search.search(conn, q, limit=pool + 2, root=root, skip_roots=skip or None, within=within)
         stale = sqlite_fts.vectors_stale(conn)  # schema upgrade pending a rebuild
     finally:
         conn.close()
@@ -111,7 +109,7 @@ def hybrid_search(q: str, root: str | None = None, limit: int = 6, within: list[
         # embedding-model call (seconds on CPU) that every question would otherwise pay for nothing.
         table = None if (stale or not settings.store_file_text) else vector_store.open_table(vector_store.connect(settings.vector_db_dir))
         if table is not None:
-            vector_results = vector_search.search(table, q, limit=pool + 2, root=root)
+            vector_results = vector_search.search(table, q, limit=pool + 2, root=root, within=within)
             semantic_ok = True
     except Exception as exc:  # embedder unreachable/timeout, or a LanceDB error
         log.warning("semantic search skipped: %s", exc)
@@ -128,8 +126,6 @@ def hybrid_search(q: str, root: str | None = None, limit: int = 6, within: list[
             reranked = True
         except Exception as exc:  # a broken model file must not break search
             log.warning("re-ranking skipped: %s", exc)
-    if within:
-        merged = [r for r in merged if pc_access.under(r["path"], within)]
     merged = _apply_open_prior(q, _drop_hidden(merged, skip))[:limit]
 
     query_terms = fts_search.terms(q)

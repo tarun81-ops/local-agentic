@@ -48,7 +48,7 @@ def plan(served: list[str]) -> list[dict]:
     """The pulls still needed: the chat model and the embedding model, unless Ollama already has them."""
     have = {_tagged(m) for m in served}
     out = []
-    for name in dict.fromkeys([current_model(), settings.embedding_model]):
+    for name in dict.fromkeys([current_model(local=True), settings.embedding_model]):  # Ollama's own, not the other server's
         if _tagged(name) not in have:
             out.append({"name": name, "label": name, "repo": name, "size_mb": SIZES_MB.get(name, 0), "command": f"ollama pull {name}"})
     return out

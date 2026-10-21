@@ -34,7 +34,7 @@ def _tags() -> list[dict]:
 def _entry(name: str, label: str, size_mb: int, installed: bool) -> dict:
     kind = "embed" if routes_setup._tagged(name) == routes_setup._tagged(settings.embedding_model) else "chat"
     return {"name": name, "label": label, "repo": name, "size_mb": size_mb, "ram_mb": expected_ram_mb(size_mb), "kind": kind,
-            "installed": installed, "active": installed and routes_setup._tagged(name) == routes_setup._tagged(current_model()),
+            "installed": installed, "active": installed and routes_setup._tagged(name) == routes_setup._tagged(current_model(local=True)),
             "recommended": kind == "chat" and routes_setup._tagged(name) == routes_setup._tagged(settings.ollama_model)}
 
 
@@ -55,10 +55,16 @@ class NameRequest(BaseModel):
 
 @router.post("/remove")
 def remove_model(req: NameRequest):
-    """Asks Ollama to delete a model (ollama rm). Never the one in use or the embedding model."""
+    """Asks Ollama to delete a model (ollama rm): only one Ollama lists, never the one in use (Ollama's, also while the
+    other server answers) or the embedding model."""
     tagged = routes_setup._tagged(req.name)
-    if tagged in (routes_setup._tagged(current_model()), routes_setup._tagged(settings.embedding_model)):
+    if tagged in (routes_setup._tagged(current_model(local=True)), routes_setup._tagged(settings.embedding_model)):
         raise HTTPException(400, "This model is in use. Switch to another model first (Use), then remove it.")
+    tags = _tags()
+    if not tags:
+        raise HTTPException(503, "Ollama isn't running. Start Ollama, then try again.")
+    if tagged not in {routes_setup._tagged(m["name"]) for m in tags}:
+        raise HTTPException(404, "That model isn't downloaded.")
     try:
         r = httpx.request("DELETE", f"{settings.ollama_url}/api/delete", json={"model": req.name}, timeout=30)
     except httpx.HTTPError:

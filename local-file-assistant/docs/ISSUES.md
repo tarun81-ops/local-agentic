@@ -1,4 +1,28 @@
-# Local File Assistant — Issues (raised 2026-09-30, worked 2026-09-30)
+# Local File Assistant — Issues
+
+## Backend audit (2026-10), Ollama build
+
+Ported from the OpenVINO build (same rules, Ollama's own model code kept): image captions and the briefing stay on
+this PC; a non-loopback other server needs https://; unannotated plug-in tools named like a change ask first (the
+user can mark them read-only); MCP servers start in the background; keyword search filters a workspace in SQL (also
+non-ASCII folder names).
+
+Not applicable here: OVMS config.json / graph.pbtxt atomic writes, the device switch and its rollback (Ollama picks
+the GPU or CPU itself). No file the app writes is re-read by another program while it runs: Ollama keeps its own model
+list and the app only talks to it over HTTP, so there was nothing else to make atomic.
+
+| # | Status | What changed |
+|---|---|---|
+| A1 | FIXED | `llm_json` runs on this PC by default (`local=True`): file-agent planning and choosing and the plug-in tool planner never reach the other server; a planner whose local engine is down is skipped and says so in the step log. Answers and flashcards may use the other server; Settings, Privacy and the confirmation say "questions, flashcards and the text of the files they use". |
+| A2 | FIXED | Settings > Model uses Ollama's model name (`current_model(local=True)`) for "in use" and remove. |
+| A3 | N/A | No device switch in the Ollama build. |
+| B1 | FIXED | Settings > Model: removing a model is refused unless Ollama lists it (404) or when Ollama isn't running (503, "Start Ollama"); the in-use check, the idle unload and setup's "still to download" list use Ollama's own model, never the other server's; "Ollama isn't running" is no longer said when the other server is the one answering. |
+| A4 | FIXED | Adding, changing or removing a plug-in server returns at once; the tools are re-registered at once (a tool just marked "ask first" never runs unasked) and the servers start in the background; the page shows STARTING and polls. |
+| A5 | FIXED | Vector search filters a workspace's folders and, when fewer than the wanted hits survive, looks once more from the top 2000 (same query vector). A LanceDB `where` on the path wasn't used: folder matching ignores case, also for non-ASCII names, which a SQL prefix filter can't. A workspace under ~1/250 of a big index can still miss semantic hits (keyword hits are never missed). |
+| A6 | FIXED | Chat keeps only the dropped files it actually read; `tools/list` follows `nextCursor` (5 pages); server stderr goes to `logs\mcp-<server>.log` (starts over past 1 MB); each plug-in tool call is logged to `backend.log` with server, tool, argument names (never values), duration and ok/failed; workspace names are unique ignoring case (migration 0012 renames old duplicates "Name (2)"). |
+| A7 | OPEN (your call) | `routes_tasks` is still wired and reachable from the UI, so it is not dead code: chat turns "remind me ..." into a reminder card (`createTask`), and REMIND ME on search rows and source cards calls `parseTask`/`createTask`; the briefing and the overdue nudge read tasks. Only the Tasks page is gone, so a saved reminder can't be listed or deleted in the app. Either remove reminders entirely (chat card, REMIND ME, scheduler toasts, routes) or keep them; nothing was deleted. |
+
+## Earlier issues (raised 2026-09-30, worked 2026-09-30)
 
 Status key: **FIXED** (code + tests), **READY TO VERIFY** (done here; needs your Windows laptop to confirm), **OPEN**.
 Backend suite: 69 tests pass (37 before), with and without OCR installed. UI builds; checked in Chromium from file:// against a stand-in Ollama.

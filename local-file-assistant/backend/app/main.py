@@ -38,6 +38,7 @@ _setup_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     assistant_db.migrate()
+    mcp.start_background()  # plug-in tool servers, in a thread: a broken one must not hold up startup or the first chat
     watcher.start()
     idle.start()
     # Memories come only from "remember that ..." in chat. Facts the model used to guess from chats

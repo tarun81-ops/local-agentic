@@ -1,12 +1,17 @@
 """Workspaces: chat search stays inside the workspace's folders (index search and the live file agent), chats are
 listed per workspace, existing chats land in "All files", and deleting a workspace never deletes a file."""
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api import routes_chat
+from app.config import settings
 from app.core import pc_access
 from app.core.assistant import conversation, file_agent, workspaces
+from app.core.search import fts_search, hybrid
 from app.core.search.hybrid import hybrid_search
+from app.db import sqlite_fts
 from app.main import app
 from tests.test_api import _add_and_wait
 
@@ -50,12 +55,43 @@ def test_index_search_is_limited_to_the_workspace_folders(client, two_folders):
     assert inside == {"college fee receipt.txt"}
 
 
+def test_a_small_workspace_in_a_big_index_still_gets_its_hits(client, tmp_path, monkeypatch):
+    """Filtering the top hits afterwards left such a workspace with none, and FILES ONLY then refused a question its
+    own file answers."""
+    monkeypatch.setattr(hybrid, "RERANK_POOL", 2)  # a small pool, so a few dozen files crowd it (indexing 100 is slow)
+    big, small = tmp_path / "Big", tmp_path / "Small"
+    big.mkdir()
+    small.mkdir()
+    for i in range(40):  # many stronger matches elsewhere, more than the widened search pool holds (4 x 6 + 2)
+        (big / f"zorbline report {i}.txt").write_text("zorbline " * 40 + f"report number {i}", encoding="utf-8")
+    (small / "zorbline note.txt").write_text("one zorbline mention", encoding="utf-8")
+    for folder in (big, small):
+        assert _add_and_wait(client, folder)["state"] == "done"
+    assert not {r["name"] for r in hybrid_search("zorbline", limit=6)["results"]} & {"zorbline note.txt"}  # the pool is crowded
+    inside = {r["name"] for r in hybrid_search("zorbline", limit=6, within=[str(small)])["results"]}
+    assert inside == {"zorbline note.txt"}
+
+
+def test_a_workspace_folder_with_a_capital_non_ascii_letter_is_still_searched(client, tmp_path):
+    """SQLite's lower() only folds ASCII; the folder has to match the way pc_access.under compares (str.lower)."""
+    folder = tmp_path / "Ünal Notes"
+    folder.mkdir()
+    (folder / "zephyrine note.txt").write_text("zephyrine memo", encoding="utf-8")
+    assert _add_and_wait(client, folder)["state"] == "done"
+    conn = sqlite_fts.connect(settings.db_path)  # the keyword leg alone: the vector leg would find it anyway
+    try:
+        found = fts_search.search(conn, "zephyrine", limit=10, within=[str(folder)])
+    finally:
+        conn.close()
+    assert [Path(r["path"]).name for r in found] == ["zephyrine note.txt"]
+
+
 def test_the_file_agent_never_opens_files_outside_the_workspace(monkeypatch, two_folders):
     a, b = two_folders
     files = [{"path": str(p), "name": p.name} for p in (*a.iterdir(), *b.iterdir())]
     monkeypatch.setattr(file_agent, "llm_json", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no model")))
     monkeypatch.setattr(file_agent, "candidates", lambda plan, hits=None, mine=False: list(files))
-    monkeypatch.setattr(file_agent, "choose", lambda q, cands: cands)
+    monkeypatch.setattr(file_agent, "choose", lambda q, cands, *a, **k: cands)
     opened = []
     monkeypatch.setattr(file_agent, "read_chunks", lambda path, *a, **k: (opened.append(path), ([{"path": path, "text": "x"}], ""))[1])
     gen = file_agent.gather("my fee receipt", within=(str(a),))
@@ -69,7 +105,7 @@ def test_the_file_agent_never_opens_files_outside_the_workspace(monkeypatch, two
 
 def test_chats_are_listed_per_workspace_and_old_chats_are_in_all_files(client, two_folders):
     old = conversation.create("from before workspaces")
-    ws = client.post("/workspaces", json={"name": "College", "roots": [str(two_folders[0])], "answer_style": "study"}, headers=AUTH).json()
+    ws = client.post("/workspaces", json={"name": "College listing", "roots": [str(two_folders[0])], "answer_style": "study"}, headers=AUTH).json()
     assert ws["roots"] == [str(two_folders[0])] and ws["answer_style"] == "study"
     mine = conversation.create("fees", workspace_id=ws["id"])
     in_ws = [c["id"] for c in client.get("/conversations", params={"workspace": ws["id"]}, headers=AUTH).json()["conversations"]]
@@ -78,8 +114,8 @@ def test_chats_are_listed_per_workspace_and_old_chats_are_in_all_files(client, t
 
 
 def test_a_chat_stays_in_the_workspace_it_was_started_in(client, two_folders):
-    a = workspaces.create("College", [str(two_folders[0])])
-    b = workspaces.create("Office", [str(two_folders[1])])
+    a = workspaces.create("College chats", [str(two_folders[0])])
+    b = workspaces.create("Office chats", [str(two_folders[1])])
     conv = conversation.create("fees", workspace_id=a["id"])
     req = routes_chat.ChatRequest(message="and the amount?", conversation_id=conv["id"], workspace_id=b["id"])
     routes_chat.chat(req)  # the stream isn't run; only the request is resolved
@@ -91,9 +127,29 @@ def test_a_chat_stays_in_the_workspace_it_was_started_in(client, two_folders):
 
 def test_deleting_a_workspace_keeps_files_and_moves_its_chats(client, two_folders):
     a = two_folders[0]
-    ws = workspaces.create("College", [str(a)])
+    ws = workspaces.create("College to delete", [str(a)])
     conv = conversation.create("fees", workspace_id=ws["id"])
     assert client.delete(f"/workspaces/{ws['id']}", headers=AUTH).json() == {"ok": True}
     assert (a / "college fee receipt.txt").is_file() and a.is_dir()
     assert conversation.get(conv["id"])["workspace_id"] is None  # now under "All files"
     assert workspaces.get(ws["id"]) is None
+
+
+def test_semantic_search_of_a_small_workspace_in_a_big_vector_index(tmp_path):
+    """A workspace holding 3 of 600 chunks: LanceDB's top hits are all from elsewhere, so the filter has to look
+    deeper once instead of returning nothing."""
+    from app.core.search import vector_search
+    from app.db import vector_store
+    from tests.conftest import DIM, fake_embed
+
+    big, small = tmp_path / "Big", tmp_path / "Small"
+    rows = [{"path": str(big / f"report {i}.txt"), "root": str(big), "loc_kind": "part", "loc_no": 1, "chunk_no": 0,
+             "text": "zorbline quarterly report"} for i in range(600)]
+    rows += [{"path": str(small / f"note {i}.txt"), "root": str(small), "loc_kind": "part", "loc_no": 1, "chunk_no": 0,
+              "text": f"zorbline aside {i} with other words entirely"} for i in range(3)]
+    vectors = fake_embed([r["text"] for r in rows])
+    table = vector_store.get_or_create_table(vector_store.connect(tmp_path / "lancedb"), DIM)
+    table.add([{**r, "vector": v} for r, v in zip(rows, vectors)])
+    assert not {r["path"] for r in vector_search.search(table, "zorbline quarterly report", limit=8)} & {r["path"] for r in rows[600:]}
+    inside = vector_search.search(table, "zorbline quarterly report", limit=8, within=[str(small).upper()])  # case-insensitive
+    assert sorted(r["path"] for r in inside) == sorted(r["path"] for r in rows[600:])

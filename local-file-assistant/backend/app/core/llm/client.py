@@ -90,12 +90,13 @@ def parse_json_object(text: str) -> dict:
     return {}
 
 
-def get_client() -> OpenAI:
+def get_client(local: bool = False) -> OpenAI:
     """Ollama's OpenAI-compatible endpoint, or the other OpenAI-compatible server switched on in Settings > Model
-    (core/llm/external.py)."""
+    (core/llm/external.py). local=True is always Ollama: image captions, the briefing and the planners must never leave
+    this PC, whatever the other server setting says."""
     from app.core.llm import external
 
-    ext = external.active()
+    ext = None if local else external.active()
     if ext:
         return OpenAI(base_url=ext["url"], api_key="unused", timeout=httpx.Timeout(settings.llm_timeout_s, connect=5), max_retries=0)
     # No retries: a second attempt doubles the wait, and the caller reports the failure anyway.
@@ -107,11 +108,11 @@ def get_client() -> OpenAI:
     )
 
 
-def current_model() -> str:
-    """The model picked in Settings (saved in the data dir), else OLLAMA_MODEL."""
+def current_model(local: bool = False) -> str:
+    """The model picked in Settings (saved in the data dir), else OLLAMA_MODEL; local=True ignores the other server."""
     from app.core.llm import external
 
-    ext = external.active()
+    ext = None if local else external.active()
     return ext["model"] if ext else prefs.get("model") or settings.ollama_model
 
 
@@ -119,13 +120,16 @@ def set_model(name: str) -> None:
     prefs.set("model", name)
 
 
-def llm_json(prompt: str, max_tokens: int = 300) -> dict:
-    """One non-streamed call that must answer with a JSON object; {} if it doesn't."""
+def llm_json(prompt: str, max_tokens: int = 300, local: bool = True) -> dict:
+    """One non-streamed call that must answer with a JSON object; {} if it doesn't. local=True (the default) keeps it
+    on this PC: the file pickers and the tool planner send file names and the tool list, which only the user's
+    questions and flashcards (local=False) may take to the other server. A planner whose local engine is down fails
+    (the caller skips its plan) instead of falling back to the other server."""
     from app.core.llm import idle
 
     idle.touch()
-    r = get_client().chat.completions.create(
-        model=current_model(),
+    r = get_client(local=local).chat.completions.create(
+        model=current_model(local=local),
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
         response_format={"type": "json_object"},

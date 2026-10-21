@@ -44,8 +44,8 @@ def unload() -> bool:
     if settings.llm_provider != "ollama":
         return False
     try:
-        httpx.post(f"{settings.ollama_url}/api/generate", json={"model": current_model(), "keep_alive": 0}, timeout=10)
-        log.info("unloaded %s after %ss idle", current_model(), personalize.effective("llm_idle_unload_s"))
+        httpx.post(f"{settings.ollama_url}/api/generate", json={"model": current_model(local=True), "keep_alive": 0}, timeout=10)
+        log.info("unloaded %s after %ss idle", current_model(local=True), personalize.effective("llm_idle_unload_s"))
         return True
     except httpx.HTTPError as exc:
         log.warning("could not unload the model: %s", exc)
