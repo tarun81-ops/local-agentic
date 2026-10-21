@@ -26,6 +26,7 @@ def get_settings():
         "ollama": ollama_status(),
         "provider": settings.llm_provider,
         "memory": ram.status(),
+        "store_file_text": settings.store_file_text,  # False = names-only: nothing can be kept in an index
     }
 
 
